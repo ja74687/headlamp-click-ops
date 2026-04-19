@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.eslintcache
+
+# editor / OS
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+.vscode-test/
+
+# build / release artifacts
+release/
+*.tgz
+*.zip
