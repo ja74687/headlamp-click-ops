@@ -2,7 +2,6 @@ import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { Autocomplete, Box, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
 import React, { useState } from 'react';
-
 import ConfigMapsTab from './ConfigMapsTab';
 import SecretsTab from './SecretsTab';
 
