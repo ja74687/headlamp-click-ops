@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Package plugin
+        run: |
+          mkdir -p release/headlamp-click-ops
+          cp dist/main.js package.json README.md LICENSE release/headlamp-click-ops/
+          cd release
+          zip -r "headlamp-click-ops-${GITHUB_REF_NAME}.zip" headlamp-click-ops
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/headlamp-click-ops-*.zip
+          generate_release_notes: true
+          body: |
+            Download the zip below, extract it into Headlamp's plugins directory, and restart
+            Headlamp. See the [README](https://github.com/ja74687/headlamp-click-ops#installation-headlamp-desktop)
+            for the directory path on your OS.
