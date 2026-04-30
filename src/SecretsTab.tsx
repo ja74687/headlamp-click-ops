@@ -79,11 +79,12 @@ function typeDef(t: string): SecretTypeDef {
   return SECRET_TYPES.find(x => x.type === t) ?? SECRET_TYPES[0];
 }
 
-type Props = { activeNamespace?: string };
+type Props = { activeNamespaces?: string[] };
 
-export default function SecretsTab({ activeNamespace = '' }: Props) {
+export default function SecretsTab({ activeNamespaces = [] }: Props) {
   const [namespaces] = K8s.ResourceClasses.Namespace.useList();
   const namespaceOptions = (namespaces ?? []).map(n => n.metadata.name).sort();
+  const defaultNamespace = activeNamespaces[0] ?? 'default';
 
   const [items, setItems] = useState<SecretResource[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -91,7 +92,7 @@ export default function SecretsTab({ activeNamespace = '' }: Props) {
   const [filter, setFilter] = useState('');
 
   const [mode, setMode] = useState<Mode>({ kind: 'create' });
-  const [namespace, setNamespace] = useState<string>(activeNamespace || 'default');
+  const [namespace, setNamespace] = useState<string>(defaultNamespace);
   const [name, setName] = useState('');
   const [secretType, setSecretType] = useState<string>('Opaque');
   const [entries, setEntries] = useState<KVEntry[]>([{ key: '', value: '', alreadyEncoded: false }]);
@@ -100,8 +101,11 @@ export default function SecretsTab({ activeNamespace = '' }: Props) {
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    if (mode.kind === 'create' && activeNamespace) setNamespace(activeNamespace);
-  }, [activeNamespace, mode.kind]);
+    if (mode.kind !== 'create') return;
+    if (activeNamespaces.length > 0 && !activeNamespaces.includes(namespace)) {
+      setNamespace(activeNamespaces[0]);
+    }
+  }, [activeNamespaces, mode.kind, namespace]);
 
   const load = useCallback(async () => {
     setListError(null);
@@ -130,9 +134,10 @@ export default function SecretsTab({ activeNamespace = '' }: Props) {
 
   const filtered = useMemo(() => {
     if (!items) return null;
+    const nsSet = new Set(activeNamespaces);
     return items
       .filter(s => (hideSystem ? !isSystemSecret(s) : true))
-      .filter(s => (activeNamespace ? s.metadata.namespace === activeNamespace : true))
+      .filter(s => (nsSet.size > 0 ? nsSet.has(s.metadata.namespace) : true))
       .filter(s =>
         filter
           ? s.metadata.name.toLowerCase().includes(filter.toLowerCase()) ||
@@ -144,11 +149,11 @@ export default function SecretsTab({ activeNamespace = '' }: Props) {
           `${b.metadata.namespace}/${b.metadata.name}`,
         ),
       );
-  }, [items, hideSystem, filter, activeNamespace]);
+  }, [items, hideSystem, filter, activeNamespaces]);
 
   function resetForm() {
     setMode({ kind: 'create' });
-    setNamespace(activeNamespace || 'default');
+    setNamespace(defaultNamespace);
     setName('');
     setSecretType('Opaque');
     setEntries([{ key: '', value: '', alreadyEncoded: false }]);
