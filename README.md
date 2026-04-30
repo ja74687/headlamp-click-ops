@@ -1,15 +1,16 @@
 # headlamp-click-ops
 
 Point-and-click cluster ops for [Headlamp](https://headlamp.dev). Build
-ServiceAccounts with RBAC, generate kubeconfigs, and manage ConfigMaps and
-Secrets — all from a GUI, no `kubectl` and no YAML hand-editing.
+ServiceAccounts with RBAC, generate kubeconfigs, manage ConfigMaps and
+Secrets, and watch live cluster resource usage — all from a GUI, no `kubectl`
+and no YAML hand-editing.
 
 [![CI](https://github.com/ja74687/headlamp-click-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/ja74687/headlamp-click-ops/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 ## What it does
 
-The plugin adds **two pages** to Headlamp's sidebar:
+The plugin adds **three pages** to Headlamp's sidebar:
 
 ### Access Builder
 
@@ -37,10 +38,27 @@ The plugin adds **two pages** to Headlamp's sidebar:
 - **Secrets** — create/edit/delete with a type selector (Opaque, TLS,
   basic-auth, Docker registry, SSH), per-row show/hide, auto base64 encoding,
   and *load-from-file* (picks the filename as the key).
-- Global namespace picker at the top filters both lists and pre-selects that
-  namespace when creating a new resource.
+- Namespace picker at the top is **synced with Headlamp's global filter** —
+  pick here or in the topbar, both stay in sync. Pre-selects that namespace
+  when creating a new resource.
 - "Hide system" toggle hides noise like `kube-root-ca.crt` and
   service-account-token Secrets.
+
+### Cluster Monitor
+
+- Three summary cards: total cluster CPU, memory and disk (root fs) — fed by
+  metrics-server (CPU/RAM) and kubelet stats (disk).
+- Per-node table with progress bars for CPU, memory, root FS and image FS —
+  the latter is what fills up first on busy nodes.
+- **Top pods by CPU** and **top pods by memory** side by side (top 5 of all
+  pods, cluster-wide).
+- **PersistentVolumeClaims** list with per-PVC capacity and live usage. Usage
+  comes from the kubelet `pods[].volume[]` stats; CSI drivers like OpenEBS or
+  Longhorn report it. The microk8s in-tree hostpath provisioner doesn't, so
+  capacity-only is shown there with a note.
+- Auto-refresh every 15 seconds plus a manual refresh button. Graceful
+  fallback when metrics-server isn't installed or `nodes/proxy` RBAC is
+  missing — affected sections show a one-line warning instead of crashing.
 
 ## Compatibility
 

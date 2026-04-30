@@ -1,5 +1,6 @@
 import { registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
 import AccessBuilderPage from './AccessBuilderPage';
+import ClusterMonitorPage from './ClusterMonitorPage';
 import ResourceBuilderPage from './ResourceBuilderPage';
 
 // eslint-disable-next-line no-console
@@ -41,4 +42,23 @@ registerRoute({
   exact: true,
   useClusterURL: true,
   component: () => <ResourceBuilderPage />,
+});
+
+registerSidebarEntry({
+  parent: null,
+  sidebar: 'IN-CLUSTER',
+  name: 'cluster-monitor',
+  label: 'Cluster Monitor',
+  url: '/cluster-monitor',
+  icon: 'mdi:gauge',
+  useClusterURL: true,
+});
+
+registerRoute({
+  path: '/cluster-monitor',
+  sidebar: 'cluster-monitor',
+  name: 'cluster-monitor',
+  exact: true,
+  useClusterURL: true,
+  component: () => <ClusterMonitorPage />,
 });

@@ -37,11 +37,12 @@ import {
 
 type Mode = { kind: 'create' } | { kind: 'edit'; namespace: string; name: string };
 
-type Props = { activeNamespace?: string };
+type Props = { activeNamespaces?: string[] };
 
-export default function ConfigMapsTab({ activeNamespace = '' }: Props) {
+export default function ConfigMapsTab({ activeNamespaces = [] }: Props) {
   const [namespaces] = K8s.ResourceClasses.Namespace.useList();
   const namespaceOptions = (namespaces ?? []).map(n => n.metadata.name).sort();
+  const defaultNamespace = activeNamespaces[0] ?? 'default';
 
   const [items, setItems] = useState<ConfigMapResource[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -49,7 +50,7 @@ export default function ConfigMapsTab({ activeNamespace = '' }: Props) {
   const [filter, setFilter] = useState('');
 
   const [mode, setMode] = useState<Mode>({ kind: 'create' });
-  const [namespace, setNamespace] = useState<string>(activeNamespace || 'default');
+  const [namespace, setNamespace] = useState<string>(defaultNamespace);
   const [name, setName] = useState('');
   const [entries, setEntries] = useState<KVEntry[]>([{ key: '', value: '' }]);
   const [busy, setBusy] = useState(false);
@@ -57,8 +58,11 @@ export default function ConfigMapsTab({ activeNamespace = '' }: Props) {
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    if (mode.kind === 'create' && activeNamespace) setNamespace(activeNamespace);
-  }, [activeNamespace, mode.kind]);
+    if (mode.kind !== 'create') return;
+    if (activeNamespaces.length > 0 && !activeNamespaces.includes(namespace)) {
+      setNamespace(activeNamespaces[0]);
+    }
+  }, [activeNamespaces, mode.kind, namespace]);
 
   const load = useCallback(async () => {
     setListError(null);
@@ -76,9 +80,10 @@ export default function ConfigMapsTab({ activeNamespace = '' }: Props) {
 
   const filtered = useMemo(() => {
     if (!items) return null;
+    const nsSet = new Set(activeNamespaces);
     return items
       .filter(cm => (hideSystem ? !isSystemConfigMap(cm) : true))
-      .filter(cm => (activeNamespace ? cm.metadata.namespace === activeNamespace : true))
+      .filter(cm => (nsSet.size > 0 ? nsSet.has(cm.metadata.namespace) : true))
       .filter(cm =>
         filter
           ? cm.metadata.name.toLowerCase().includes(filter.toLowerCase()) ||
@@ -90,11 +95,11 @@ export default function ConfigMapsTab({ activeNamespace = '' }: Props) {
           `${b.metadata.namespace}/${b.metadata.name}`,
         ),
       );
-  }, [items, hideSystem, filter, activeNamespace]);
+  }, [items, hideSystem, filter, activeNamespaces]);
 
   function resetForm() {
     setMode({ kind: 'create' });
-    setNamespace(activeNamespace || 'default');
+    setNamespace(defaultNamespace);
     setName('');
     setEntries([{ key: '', value: '' }]);
     setError(null);
