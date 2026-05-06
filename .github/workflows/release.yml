@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -25,20 +28,58 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Package plugin
+      - name: Package plugin (tarball for ArtifactHub)
+        id: pkg
+        run: |
+          npm run package -- .
+          TARBALL=$(ls headlamp-click-ops-*.tar.gz | head -n1)
+          SHA=$(sha256sum "$TARBALL" | awk '{print $1}')
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Package legacy zip (for users who prefer manual unzip)
         run: |
           mkdir -p release/headlamp-click-ops
           cp dist/main.js package.json README.md LICENSE release/headlamp-click-ops/
           cd release
           zip -r "headlamp-click-ops-${GITHUB_REF_NAME}.zip" headlamp-click-ops
-          ls -la
+
+      - name: Update artifacthub-pkg.yml
+        run: |
+          ARCHIVE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${{ steps.pkg.outputs.tarball }}"
+          sed -i "s|^version: .*|version: ${{ steps.pkg.outputs.version }}|" artifacthub-pkg.yml
+          sed -i "s|headlamp/plugin/archive-url: .*|headlamp/plugin/archive-url: \"${ARCHIVE_URL}\"|" artifacthub-pkg.yml
+          sed -i "s|headlamp/plugin/archive-checksum: .*|headlamp/plugin/archive-checksum: \"sha256:${{ steps.pkg.outputs.sha }}\"|" artifacthub-pkg.yml
+          cat artifacthub-pkg.yml
+
+      - name: Commit updated artifacthub-pkg.yml
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacthub-pkg.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update artifacthub-pkg.yml for ${GITHUB_REF_NAME}"
+            git push origin HEAD:main
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: release/headlamp-click-ops-*.zip
+          files: |
+            ${{ steps.pkg.outputs.tarball }}
+            release/headlamp-click-ops-*.zip
           generate_release_notes: true
           body: |
-            Download the zip below, extract it into Headlamp's plugins directory, and restart
-            Headlamp. See the [README](https://github.com/ja74687/headlamp-click-ops#installation-headlamp-desktop)
+            ## Install via Headlamp Plugin Catalog (recommended)
+
+            Once this plugin is registered on ArtifactHub it will appear in
+            Headlamp's built-in Plugin Catalog — install and update with one click.
+
+            ## Manual install
+
+            Download `headlamp-click-ops-${{ github.ref_name }}.zip` below, extract it
+            into Headlamp's plugins directory, and restart Headlamp.
+            See the [README](https://github.com/ja74687/headlamp-click-ops#installation-headlamp-desktop)
             for the directory path on your OS.

@@ -12,6 +12,7 @@ npm-debug.log*
 # build / release artifacts
 release/
 *.tgz
+*.tar.gz
 *.zip
 
 .idea/*
