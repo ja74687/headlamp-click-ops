@@ -1,7 +1,7 @@
 {
   "name": "headlamp-click-ops",
-  "version": "0.2.2",
-  "description": "Point-and-click cluster ops for Headlamp — build ServiceAccounts, RBAC, kubeconfigs, ConfigMaps and Secrets without writing YAML.",
+  "version": "0.3.0",
+  "description": "Point-and-click cluster ops for Headlamp — build ServiceAccounts, RBAC, kubeconfigs, ConfigMaps, Secrets, monitor cluster resource usage, and customize the sidebar.",
   "author": "ja74687",
   "license": "MIT",
   "repository": {
@@ -39,7 +39,8 @@
     "secret",
     "click-ops",
     "monitoring",
-    "metrics"
+    "metrics",
+    "sidebar"
   ],
   "prettier": "@headlamp-k8s/eslint-config/prettier-config",
   "eslintConfig": {

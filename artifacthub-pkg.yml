@@ -2,7 +2,7 @@ version: 0.2.2
 name: headlamp-click-ops
 displayName: Click-Ops for Headlamp
 createdAt: "2026-05-06T00:00:00Z"
-description: Point-and-click cluster ops for Headlamp — build ServiceAccounts, RBAC, kubeconfigs, ConfigMaps and Secrets without writing YAML, plus a cluster monitor view.
+description: Point-and-click cluster ops for Headlamp — build ServiceAccounts and RBAC, generate kubeconfigs, manage ConfigMaps and Secrets without writing YAML, watch live cluster resource usage, and customize Headlamp's sidebar (hide entries you don't use).
 logoURL: https://raw.githubusercontent.com/ja74687/headlamp-click-ops/main/assets/logo/icon.svg
 license: MIT
 homeURL: https://github.com/ja74687/headlamp-click-ops
@@ -22,6 +22,8 @@ keywords:
   - kubeconfig
   - configmap
   - secret
+  - cluster-monitor
+  - sidebar
   - click-ops
 annotations:
   headlamp/plugin/archive-url: "https://github.com/ja74687/headlamp-click-ops/releases/download/v0.2.2/headlamp-click-ops-0.2.2.tar.gz"
