@@ -5,9 +5,9 @@ import {
 } from '@kinvolk/headlamp-plugin/lib';
 import AccessBuilderPage from './AccessBuilderPage';
 import ClusterMonitorPage from './ClusterMonitorPage';
+import { getCurrentSettings, recordDiscovered } from './lib/sidebarSettings';
 import ResourceBuilderPage from './ResourceBuilderPage';
 import SidebarSettingsPage from './SidebarSettingsPage';
-import { getCurrentSettings, recordDiscovered } from './lib/sidebarSettings';
 
 // eslint-disable-next-line no-console
 console.log('[access-builder] plugin loaded');
