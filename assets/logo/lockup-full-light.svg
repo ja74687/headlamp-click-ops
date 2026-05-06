@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 200" role="img" aria-label="headlamp-click-ops">
+  <title>headlamp-click-ops</title>
+
+  <!-- ICON -->
+  <g transform="translate(20,20) scale(0.625)">
+    <rect width="256" height="256" rx="56" ry="56" fill="#326CE5"/>
+    <path d="M 104 122 L 152 122 L 196 220 L 60 220 Z" fill="#FFFFFF" fill-opacity="0.18"/>
+    <path d="M 60 84 C 60 56, 196 56, 196 84 L 196 104 C 196 116, 188 122, 172 122 L 84 122 C 68 122, 60 116, 60 104 Z" fill="#FFFFFF"/>
+    <circle cx="128" cy="92" r="22" fill="#326CE5"/>
+    <circle cx="128" cy="92" r="10" fill="#FFFFFF"/>
+    <path d="M 104 144 L 104 214 L 122 198 L 134 222 L 150 215 L 138 192 L 160 192 Z" fill="#FFFFFF" stroke="#326CE5" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+
+  <!-- WORDMARK -->
+  <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', 'JetBrains Mono', monospace">
+    <text x="200" y="125" font-size="68" font-weight="700" letter-spacing="-2">
+      <tspan fill="#0F1A2E">headlamp</tspan><tspan fill="#326CE5">-</tspan><tspan fill="#326CE5">click-ops</tspan>
+    </text>
+  </g>
+</svg>
