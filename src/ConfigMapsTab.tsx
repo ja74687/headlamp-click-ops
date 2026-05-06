@@ -58,11 +58,21 @@ export default function ConfigMapsTab({ activeNamespaces = [] }: Props) {
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    if (mode.kind !== 'create') return;
+    if (mode.kind === 'edit') {
+      if (activeNamespaces.length > 0 && !activeNamespaces.includes(mode.namespace)) {
+        setMode({ kind: 'create' });
+        setNamespace(activeNamespaces[0]);
+        setName('');
+        setEntries([{ key: '', value: '' }]);
+        setError(null);
+        setSuccess(null);
+      }
+      return;
+    }
     if (activeNamespaces.length > 0 && !activeNamespaces.includes(namespace)) {
       setNamespace(activeNamespaces[0]);
     }
-  }, [activeNamespaces, mode.kind, namespace]);
+  }, [activeNamespaces, mode, namespace]);
 
   const load = useCallback(async () => {
     setListError(null);
