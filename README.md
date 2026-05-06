@@ -1,12 +1,25 @@
-# headlamp-click-ops
+<p align="center">
+  <img src="assets/logo/icon.svg" alt="headlamp-click-ops" width="160" height="160" />
+</p>
 
-Point-and-click cluster ops for [Headlamp](https://headlamp.dev). Build
-ServiceAccounts with RBAC, generate kubeconfigs, manage ConfigMaps and
-Secrets, and watch live cluster resource usage — all from a GUI, no `kubectl`
-and no YAML hand-editing.
+<h1 align="center">headlamp-click-ops</h1>
 
-[![CI](https://github.com/ja74687/headlamp-click-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/ja74687/headlamp-click-ops/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+<p align="center">
+  Point-and-click cluster ops for <a href="https://headlamp.dev">Headlamp</a>.<br/>
+  Build ServiceAccounts with RBAC, generate kubeconfigs, manage ConfigMaps and
+  Secrets, and watch live cluster resource usage — all from a GUI, no
+  <code>kubectl</code> and no YAML hand-editing.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ja74687/headlamp-click-ops/actions/workflows/ci.yml"><img src="https://github.com/ja74687/headlamp-click-ops/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+  <a href="https://buycoffee.to/softime-pk" target="_blank"><img src="https://img.shields.io/badge/%E2%98%95-Postaw%20mi%20kaw%C4%99-FFDD00?style=flat&labelColor=000000" alt="Postaw mi kawę na buycoffee.to" /></a>
+</p>
+
+<p align="center">
+  <a href="https://buycoffee.to/softime-pk" target="_blank"><img src="https://buycoffee.to/static/img/share/share-button-primary.png" width="254" height="66" alt="Postaw mi kawę na buycoffee.to"></a>
+</p>
 
 ## What it does
 

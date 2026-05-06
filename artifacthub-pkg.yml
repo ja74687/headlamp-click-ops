@@ -3,7 +3,7 @@ name: headlamp-click-ops
 displayName: Click-Ops for Headlamp
 createdAt: "2026-05-06T00:00:00Z"
 description: Point-and-click cluster ops for Headlamp — build ServiceAccounts, RBAC, kubeconfigs, ConfigMaps and Secrets without writing YAML, plus a cluster monitor view.
-logoURL: https://raw.githubusercontent.com/headlamp-k8s/headlamp/main/frontend/src/resources/logo-light.svg
+logoURL: https://raw.githubusercontent.com/ja74687/headlamp-click-ops/main/assets/logo/icon.svg
 license: MIT
 homeURL: https://github.com/ja74687/headlamp-click-ops
 links:

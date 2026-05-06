@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="headlamp-click-ops mark">
+  <title>headlamp-click-ops mark</title>
+
+  <!-- Light cone -->
+  <path d="M 104 122 L 152 122 L 196 220 L 60 220 Z"
+        fill="#326CE5" fill-opacity="0.18"/>
+
+  <!-- Headband + lamp housing -->
+  <path d="M 60 84
+           C 60 56, 196 56, 196 84
+           L 196 104
+           C 196 116, 188 122, 172 122
+           L 84 122
+           C 68 122, 60 116, 60 104 Z"
+        fill="#326CE5"/>
+
+  <!-- Lens recess (white) -->
+  <circle cx="128" cy="92" r="22" fill="#FFFFFF"/>
+
+  <!-- Lens highlight -->
+  <circle cx="128" cy="92" r="10" fill="#326CE5"/>
+
+  <!-- Cursor arrow inside beam -->
+  <path d="M 104 144
+           L 104 214
+           L 122 198
+           L 134 222
+           L 150 215
+           L 138 192
+           L 160 192 Z"
+        fill="#326CE5" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round"/>
+</svg>

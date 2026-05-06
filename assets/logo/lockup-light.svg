@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 220" role="img" aria-label="click-ops for Headlamp">
+  <title>click-ops for Headlamp</title>
+
+  <!-- ============== ICON ============== -->
+  <g transform="translate(20,20) scale(0.703)">
+    <!-- Background tile -->
+    <rect width="256" height="256" rx="56" ry="56" fill="#326CE5"/>
+
+    <!-- Light cone -->
+    <path d="M 104 122 L 152 122 L 196 220 L 60 220 Z"
+          fill="#FFFFFF" fill-opacity="0.18"/>
+
+    <!-- Headband + lamp housing -->
+    <path d="M 60 84
+             C 60 56, 196 56, 196 84
+             L 196 104
+             C 196 116, 188 122, 172 122
+             L 84 122
+             C 68 122, 60 116, 60 104 Z"
+          fill="#FFFFFF"/>
+
+    <!-- Lens recess -->
+    <circle cx="128" cy="92" r="22" fill="#326CE5"/>
+    <circle cx="128" cy="92" r="10" fill="#FFFFFF"/>
+
+    <!-- Cursor arrow -->
+    <path d="M 104 144
+             L 104 214
+             L 122 198
+             L 134 222
+             L 150 215
+             L 138 192
+             L 160 192 Z"
+          fill="#FFFFFF" stroke="#326CE5" stroke-width="3" stroke-linejoin="round"/>
+  </g>
+
+  <!-- ============== WORDMARK ============== -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, 'Helvetica Neue', Arial, sans-serif">
+    <!-- Primary name -->
+    <text x="220" y="120"
+          font-size="92"
+          font-weight="800"
+          letter-spacing="-3"
+          fill="#0F1A2E">click-ops</text>
+
+    <!-- Subline -->
+    <text x="222" y="162"
+          font-size="28"
+          font-weight="500"
+          letter-spacing="2"
+          fill="#326CE5">FOR&#160;&#160;HEADLAMP</text>
+  </g>
+</svg>
