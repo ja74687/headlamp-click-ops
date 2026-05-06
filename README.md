@@ -7,8 +7,8 @@
 <p align="center">
   Point-and-click cluster ops for <a href="https://headlamp.dev">Headlamp</a>.<br/>
   Build ServiceAccounts with RBAC, generate kubeconfigs, manage ConfigMaps and
-  Secrets, and watch live cluster resource usage — all from a GUI, no
-  <code>kubectl</code> and no YAML hand-editing.
+  Secrets, watch live cluster resource usage, and tame Headlamp's sidebar —
+  all from a GUI, no <code>kubectl</code> and no YAML hand-editing.
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 
 ## What it does
 
-The plugin adds **three pages** to Headlamp's sidebar:
+The plugin adds **four pages** to Headlamp's sidebar:
 
 ### Access Builder
 
@@ -73,6 +73,31 @@ The plugin adds **three pages** to Headlamp's sidebar:
   fallback when metrics-server isn't installed or `nodes/proxy` RBAC is
   missing — affected sections show a one-line warning instead of crashing.
 
+### Sidebar Settings
+
+- Walks Headlamp's sidebar tree and lists **every** entry — built-in
+  categories (Workloads, Storage, Network, Security, Configuration, Custom
+  Resources, Apps, Gateway), every CRD group registered in the cluster, and
+  plugin-added entries — in a single hierarchical table.
+- **Hide / restore** any entry with one click; a hidden entry vanishes from
+  the sidebar instantly (no Headlamp restart) and reappears just as fast when
+  you un-tick it here.
+- Hierarchy is reconstructed from three sources stacked together: a known
+  mapping of Headlamp's top-level categories (Pods → Workloads, PVCs →
+  Storage…), URL-prefix matching (`/apps/catalog` under `/apps`), and the
+  CRD `group-<group>` / `<plural>.<group>` naming convention — so things
+  end up where you'd expect.
+- **Smart cascade**: tick a parent and all its children get hidden; un-tick
+  one child while the parent is hidden and the parent restores itself; hide
+  the last visible child of a category and the parent goes too. No stranded
+  half-hidden categories.
+- The Sidebar Settings entry itself is the one safe item — it never appears
+  in the table and can never be hidden, so you can always get back here.
+
+> ⚠️ Headlamp's plugin filter API in 0.41 only supports show/hide (not
+> reparenting), so a collapsible *More* submenu isn't possible from a plugin
+> alone — hidden = hidden, restored from this page.
+
 ## Compatibility
 
 - Headlamp **0.41+** (desktop app recommended — tested there)
@@ -97,8 +122,9 @@ The plugin adds **three pages** to Headlamp's sidebar:
      package.json
    ```
 3. **Fully quit Headlamp** (check the system tray, not just the window) and
-   start it again. Two new entries — *Access Builder* and *Resource Builder* —
-   show up in the sidebar once you open a cluster.
+   start it again. Four new entries — *Access Builder*, *Resource Builder*,
+   *Cluster Monitor* and *Sidebar Settings* — show up in the sidebar once you
+   open a cluster.
 
 ### Option B — build from source
 
@@ -156,17 +182,23 @@ sees exactly those N namespaces, not the whole cluster.
 
 ## Releasing a new version (maintainer)
 
-The `.github/workflows/release.yml` workflow builds the plugin and attaches a
-zip to a GitHub Release whenever you push a tag matching `v*`:
+The `.github/workflows/release.yml` workflow builds the plugin and publishes
+both a `.tar.gz` (for the Headlamp Plugin Catalog via ArtifactHub) and a
+`.zip` (for manual install) to a GitHub Release whenever you push a tag
+matching `v*`:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+# bump version in package.json first
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-The workflow then does: `npm install` → `npm run build` → zip `main.js +
-package.json` as `headlamp-click-ops-v0.2.0.zip` → create a GitHub Release and
-upload the zip as an asset.
+The workflow does: `npm install` → `npm run build` → `npm run package`
+(produces tarball + sha256) → updates `artifacthub-pkg.yml` on `main` with
+the new version, archive URL and checksum (committed back automatically) →
+creates a GitHub Release with both archives attached. ArtifactHub picks up
+the new version on its next scan (~30 min) and the Headlamp Plugin Catalog
+shows an *Update* button to existing users.
 
 ## Support the project
 
