@@ -1,6 +1,6 @@
 {
   "name": "headlamp-click-ops",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Point-and-click cluster ops for Headlamp — build ServiceAccounts, RBAC, kubeconfigs, ConfigMaps, Secrets, monitor cluster resource usage, and customize the sidebar.",
   "author": "ja74687",
   "license": "MIT",
