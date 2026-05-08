@@ -630,10 +630,33 @@ async function reconcileEdit(current: ManagedAccount, desired: BuildInput): Prom
   const roleKindChanged =
     (current.bindingNamespaces.length > 0 || current.clusterBindingName) &&
     current.roleKind !== desiredRoleKind;
+
+  // Apply-first, prune-after: if any step fails, the cluster is left over-permissioned
+  // (old bindings still present) rather than under-permissioned (broken account, no access).
+  await applyResources([buildTokenSecret(desired), buildRole(desired)]);
+
   if (roleKindChanged) {
-    await deleteRole(current);
+    // roleRef is immutable on (Cluster)RoleBinding, so a kind change forces a delete+recreate
+    // of every binding. The new Role/ClusterRole was just created above (different kind, same
+    // name → coexists with the old one), so the gap window is just bindings, not the role.
+    for (const [i, ns] of current.bindingNamespaces.entries()) {
+      const name = current.bindingNames[i] ?? bindingName(`${current.name}-binding`, ns);
+      await deleteResource('rbac.authorization.k8s.io/v1', 'RoleBinding', name, ns);
+    }
+    if (current.clusterBindingName) {
+      await deleteResource(
+        'rbac.authorization.k8s.io/v1',
+        'ClusterRoleBinding',
+        current.clusterBindingName,
+      );
+    }
   }
 
+  await applyResources(desiredBindings);
+
+  // Only prune after the desired state is in place.
+  // (When roleKindChanged, the kindChanged block above already removed every old binding;
+  // anything still desired was just recreated in Phase 3, so this loop is a no-op for it.)
   for (const [i, ns] of current.bindingNamespaces.entries()) {
     const name = current.bindingNames[i] ?? bindingName(`${current.name}-binding`, ns);
     const key = `RoleBinding/${ns}/${name}`;
@@ -652,7 +675,9 @@ async function reconcileEdit(current: ManagedAccount, desired: BuildInput): Prom
     }
   }
 
-  await applyResources([buildTokenSecret(desired), buildRole(desired), ...desiredBindings]);
+  if (roleKindChanged) {
+    await deleteRole(current);
+  }
 }
 
 async function cascadeDelete(account: ManagedAccount): Promise<void> {
