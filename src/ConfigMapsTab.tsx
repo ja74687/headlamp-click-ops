@@ -77,12 +77,13 @@ export default function ConfigMapsTab({ activeNamespaces = [] }: Props) {
   const load = useCallback(async () => {
     setListError(null);
     try {
-      setItems(await listConfigMaps());
+      setItems(await listConfigMaps(activeNamespaces));
     } catch (err) {
       setListError(err instanceof Error ? err.message : String(err));
       setItems([]);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNamespaces.join(',')]);
 
   useEffect(() => {
     load();

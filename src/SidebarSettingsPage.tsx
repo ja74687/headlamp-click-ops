@@ -26,6 +26,8 @@ import {
   subscribeDiscovered,
 } from './lib/sidebarSettings';
 
+const NOOP_FILTER = <T,>(entry: T): T => entry;
+
 function useDiscovered() {
   return useSyncExternalStore(subscribeDiscovered, getDiscoveredEntries, getDiscoveredEntries);
 }
@@ -296,10 +298,17 @@ export default function SidebarSettingsPage() {
 
   function onSave() {
     const list = [...hidden];
+    const changed =
+      list.length !== savedHidden.size || list.some(name => !savedHidden.has(name));
     saveSettings({ hidden: list });
     setSavedHidden(new Set(list));
     setSavedAt(Date.now());
-    registerSidebarEntryFilter(e => e);
+    // Registering a filter is the only lever a plugin has to make Headlamp re-run the
+    // filter chain, and Headlamp never unregisters one — so every save used to leave
+    // another no-op behind, permanently. Only pay that cost when something actually moved.
+    if (changed) {
+      registerSidebarEntryFilter(NOOP_FILTER);
+    }
   }
 
   function onReset() {

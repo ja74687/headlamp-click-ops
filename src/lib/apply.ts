@@ -27,12 +27,82 @@ function kindToPlural(kind: string): string {
   const map: Record<string, string> = {
     ServiceAccount: 'serviceaccounts',
     Secret: 'secrets',
+    ConfigMap: 'configmaps',
     Role: 'roles',
     RoleBinding: 'rolebindings',
     ClusterRole: 'clusterroles',
     ClusterRoleBinding: 'clusterrolebindings',
+    Namespace: 'namespaces',
+    Endpoints: 'endpoints',
+    Ingress: 'ingresses',
+    IngressClass: 'ingressclasses',
+    NetworkPolicy: 'networkpolicies',
+    StorageClass: 'storageclasses',
+    PodDisruptionBudget: 'poddisruptionbudgets',
+    HorizontalPodAutoscaler: 'horizontalpodautoscalers',
+    PersistentVolume: 'persistentvolumes',
+    PersistentVolumeClaim: 'persistentvolumeclaims',
+    PriorityClass: 'priorityclasses',
   };
-  return map[kind] ?? kind.toLowerCase() + 's';
+  const mapped = map[kind];
+  if (mapped) return mapped;
+  // Naive fallback. Kinds ending in s/x/z or y need the map above — add them there
+  // rather than relying on this.
+  const lower = kind.toLowerCase();
+  if (lower.endsWith('y')) return `${lower.slice(0, -1)}ies`;
+  if (/(s|x|z|ch|sh)$/.test(lower)) return `${lower}es`;
+  return `${lower}s`;
+}
+
+/**
+ * Status code from whatever ApiProxy threw. Headlamp's ApiError carries `status`;
+ * older paths only give us a message, hence the regex fallback.
+ */
+function statusOf(err: unknown): number | null {
+  const anyErr = err as any;
+  const direct = anyErr?.status ?? anyErr?.statusCode ?? anyErr?.response?.status;
+  if (typeof direct === 'number') return direct;
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = msg.match(/\b(4\d\d|5\d\d)\b/);
+  return m ? Number(m[1]) : null;
+}
+
+function isConflict(err: unknown): boolean {
+  if (statusOf(err) === 409) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /already\s*exists|\bconflict\b/i.test(msg);
+}
+
+export function isNotFound(err: unknown): boolean {
+  if (!err) return false;
+  if (statusOf(err) === 404) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /not\s*found/i.test(msg);
+}
+
+/**
+ * Merge the desired object onto the live one instead of blindly replacing it.
+ *
+ * A plain PUT of `{apiVersion, kind, metadata: {name, namespace}, data}` wipes every
+ * field the caller did not restate — labels, annotations, ownerReferences, and for a
+ * ConfigMap also `binaryData`. That silently detaches Helm-managed objects from their
+ * release. Top-level keys the caller *does* set (data, rules, subjects...) still replace
+ * wholesale, so removing a key from a ConfigMap still removes it.
+ */
+function mergeOntoExisting(current: any, desired: AnyResource): any {
+  const currentMeta = current?.metadata ?? {};
+  const desiredMeta: any = desired.metadata ?? {};
+  return {
+    ...current,
+    ...desired,
+    metadata: {
+      ...currentMeta,
+      ...desiredMeta,
+      labels: { ...(currentMeta.labels ?? {}), ...(desiredMeta.labels ?? {}) },
+      annotations: { ...(currentMeta.annotations ?? {}), ...(desiredMeta.annotations ?? {}) },
+      resourceVersion: currentMeta.resourceVersion,
+    },
+  };
 }
 
 export async function applyResources(resources: AnyResource[]): Promise<void> {
@@ -46,29 +116,16 @@ async function createOrUpdate(res: AnyResource): Promise<void> {
     await post(urlFor(res), res, false);
     return;
   } catch (err) {
-    if (!isConflict(err) && !isAlreadyExists(err)) throw err;
+    if (!isConflict(err)) throw err;
   }
   const url = getUrlFor(res);
   const current: any = await request(url);
-  const body: any = {
-    ...res,
-    metadata: { ...res.metadata, resourceVersion: current?.metadata?.resourceVersion },
-  };
+  const body = mergeOntoExisting(current, res);
   await request(url, {
     method: 'PUT',
     body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json' },
   });
-}
-
-function isConflict(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /\b409\b|conflict/i.test(msg);
-}
-
-function isAlreadyExists(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /already\s*exists/i.test(msg);
 }
 
 export async function deleteResource(
@@ -98,17 +155,21 @@ export async function patchResource(
   await patch(url, body, false);
 }
 
-export function isNotFound(err: unknown): boolean {
-  if (!err) return false;
-  const msg = err instanceof Error ? err.message : String(err);
-  return /404|not\s*found/i.test(msg);
-}
-
 export type TokenSecretData = {
   token: string;
   caCrtBase64: string;
   namespace: string;
 };
+
+function readTokenSecret(secret: any, fallbackNamespace: string): TokenSecretData | null {
+  const data = secret?.data ?? {};
+  if (!data.token || !data['ca.crt']) return null;
+  return {
+    token: atob(data.token),
+    caCrtBase64: data['ca.crt'],
+    namespace: data.namespace ? atob(data.namespace) : fallbackNamespace,
+  };
+}
 
 export async function waitForToken(
   namespace: string,
@@ -120,15 +181,8 @@ export async function waitForToken(
   let lastErr: unknown;
   while (Date.now() - started < timeoutMs) {
     try {
-      const secret: any = await request(url);
-      const data = secret?.data ?? {};
-      if (data.token && data['ca.crt']) {
-        return {
-          token: atob(data.token),
-          caCrtBase64: data['ca.crt'],
-          namespace: data.namespace ? atob(data.namespace) : namespace,
-        };
-      }
+      const parsed = readTokenSecret(await request(url), namespace);
+      if (parsed) return parsed;
     } catch (err) {
       lastErr = err;
     }
@@ -157,7 +211,9 @@ export async function detectApiServerUrl(): Promise<string | null> {
     const subset = ep?.subsets?.[0];
     const addr = subset?.addresses?.[0];
     const host = addr?.hostname ?? addr?.ip;
-    const httpsPort = subset?.ports?.find((p: any) => p.name === 'https' || p.port === 443 || p.port === 6443);
+    const httpsPort = subset?.ports?.find(
+      (p: any) => p.name === 'https' || p.port === 443 || p.port === 6443,
+    );
     const port = httpsPort?.port ?? subset?.ports?.[0]?.port;
     if (host && port) return `https://${host}:${port}`;
   } catch {
@@ -171,16 +227,8 @@ export async function fetchToken(
   secretName: string,
 ): Promise<TokenSecretData | null> {
   try {
-    const secret: any = await request(`/api/v1/namespaces/${namespace}/secrets/${secretName}`);
-    const data = secret?.data ?? {};
-    if (data.token && data['ca.crt']) {
-      return {
-        token: atob(data.token),
-        caCrtBase64: data['ca.crt'],
-        namespace: data.namespace ? atob(data.namespace) : namespace,
-      };
-    }
-    return null;
+    const secret = await request(`/api/v1/namespaces/${namespace}/secrets/${secretName}`);
+    return readTokenSecret(secret, namespace);
   } catch {
     return null;
   }

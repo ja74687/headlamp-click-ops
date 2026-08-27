@@ -29,13 +29,13 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import KeyValueEditor, { KVEntry } from './KeyValueEditor';
 import {
   applySecret,
-  decodeBase64ToUtf8,
   deleteSecret,
   encodeUtf8ToBase64,
   getSecret,
   isSystemSecret,
   listSecrets,
   SecretResource,
+  tryDecodeBase64ToUtf8,
 } from './lib/kvResources';
 
 type Mode = { kind: 'create' } | { kind: 'edit'; namespace: string; name: string };
@@ -121,12 +121,13 @@ export default function SecretsTab({ activeNamespaces = [] }: Props) {
   const load = useCallback(async () => {
     setListError(null);
     try {
-      setItems(await listSecrets());
+      setItems(await listSecrets(activeNamespaces));
     } catch (err) {
       setListError(err instanceof Error ? err.message : String(err));
       setItems([]);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNamespaces.join(',')]);
 
   useEffect(() => {
     load();
@@ -179,11 +180,14 @@ export default function SecretsTab({ activeNamespaces = [] }: Props) {
     setName(fresh.metadata.name);
     setSecretType(fresh.type ?? 'Opaque');
     setEntries(
-      Object.entries(fresh.data ?? {}).map(([k, v]) => ({
-        key: k,
-        value: decodeBase64ToUtf8(v),
-        alreadyEncoded: false,
-      })),
+      Object.entries(fresh.data ?? {}).map(([k, v]) => {
+        // Binary values (keystores, raw keys) survive only as opaque base64 — decoding
+        // them to text and re-encoding on save would corrupt them beyond repair.
+        const text = tryDecodeBase64ToUtf8(v);
+        return text === null
+          ? { key: k, value: v, alreadyEncoded: true }
+          : { key: k, value: text, alreadyEncoded: false };
+      }),
     );
     setError(null);
     setSuccess(null);

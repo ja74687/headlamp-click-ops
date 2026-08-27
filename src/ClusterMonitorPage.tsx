@@ -17,7 +17,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ClusterMetricsResult,
   fetchClusterMetrics,
@@ -124,7 +124,21 @@ export default function ClusterMonitorPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const load = useCallback(async () => {
+    // One refresh fans out to a full pod list plus a kubelet call per node. Overlapping
+    // runs (a manual click during the interval tick, or a backlog built up while the tab
+    // was hidden) would multiply that for no benefit.
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -136,6 +150,7 @@ export default function ClusterMonitorPage() {
         ),
         fetchTopPods(),
       ]);
+      if (!mounted.current) return;
       setData(result);
       setPvcs(pvcResult.rows);
       setPvcError(pvcResult.error);
@@ -143,16 +158,25 @@ export default function ClusterMonitorPage() {
       setPodError(podResult.error);
       setLastUpdate(new Date());
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (mounted.current) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      inFlight.current = false;
+      if (mounted.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     load();
-    const handle = setInterval(load, REFRESH_MS);
-    return () => clearInterval(handle);
+    // Polling a hidden tab just burns API calls; catch up on the next visibility change.
+    const tick = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    const handle = setInterval(tick, REFRESH_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(handle);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [load]);
 
   const nodes: NodeRow[] = data?.nodes ?? [];
