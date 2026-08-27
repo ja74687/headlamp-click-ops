@@ -44,15 +44,17 @@ import { PRESETS, RESOURCE_CATALOG, Verb, VERBS } from './lib/catalog';
 import { ManagedAccount } from './lib/discovery';
 import { buildKubeconfig, downloadText } from './lib/kubeconfig';
 import {
-  bindingName,
   buildAll,
   buildBindings,
   BuildInput,
   buildRole,
   buildTokenSecret,
+  buildUiClusterRead,
   deriveNames,
   roleKind,
   Rule,
+  UI_ACCESS_LEVELS,
+  UiAccessLevel,
   validateInput,
 } from './lib/rbac';
 import ManagedAccountsList from './ManagedAccountsList';
@@ -79,6 +81,7 @@ export default function AccessBuilderPage() {
   const [rules, setRules] = useState<Rule[]>([emptyRule()]);
   const [serverUrl, setServerUrl] = useState<string>('');
   const [insecure, setInsecure] = useState<boolean>(false);
+  const [uiAccess, setUiAccess] = useState<UiAccessLevel>('namespaces');
 
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -92,20 +95,31 @@ export default function AccessBuilderPage() {
 
   const derived = useMemo(() => deriveNames(saName), [saName]);
 
-  const input: BuildInput = {
-    scope,
-    namespaces: scope === 'Namespaced' ? selectedNamespaces : [],
-    tokenNamespace,
-    ...derived,
-    rules,
-  };
+  const input: BuildInput = useMemo(
+    () => ({
+      scope,
+      namespaces: scope === 'Namespaced' ? selectedNamespaces : [],
+      tokenNamespace,
+      ...derived,
+      uiAccess,
+      rules,
+    }),
+    [scope, selectedNamespaces, tokenNamespace, derived, uiAccess, rules],
+  );
 
-  const errors = validateInput(input);
-  const resources = errors.length === 0 ? buildAll(input) : [];
-  const previewYaml =
-    resources.length > 0
-      ? resources.map(r => yaml.dump(r, { noRefs: true, lineWidth: -1 })).join('---\n')
-      : '';
+  const errors = useMemo(() => validateInput(input), [input]);
+  const resources = useMemo(
+    () => (errors.length === 0 ? buildAll(input) : []),
+    [errors.length, input],
+  );
+  // Serialising every manifest on each keystroke was the most expensive thing this form did.
+  const previewYaml = useMemo(
+    () =>
+      resources.length > 0
+        ? resources.map(r => yaml.dump(r, { noRefs: true, lineWidth: -1 })).join('---\n')
+        : '',
+    [resources],
+  );
 
   useEffect(() => {
     if (scope === 'Cluster' && !tokenNamespace) setTokenNamespace('default');
@@ -147,6 +161,7 @@ export default function AccessBuilderPage() {
     setRules([emptyRule()]);
     setServerUrl('');
     setInsecure(false);
+    setUiAccess('namespaces');
     setToken(null);
     setApplyError(null);
     setSuccessMessage(null);
@@ -161,6 +176,7 @@ export default function AccessBuilderPage() {
     setTokenNamespace(account.namespace);
     setSaName(account.name);
     setRules(account.rules.length > 0 ? account.rules : [emptyRule()]);
+    setUiAccess(account.uiAccess);
     setToken(null);
     setApplyError(null);
     setSuccessMessage(null);
@@ -371,6 +387,67 @@ export default function AccessBuilderPage() {
             )}
             disabled={mode.kind === 'edit'}
           />
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Typography variant="h6" gutterBottom>
+            Headlamp UI access
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            A RoleBinding only grants access inside its own namespace, even when it points at
+            a ClusterRole. Listing namespaces, reading nodes and reading metrics are all
+            cluster-scoped, so without a separate ClusterRoleBinding the account gets{' '}
+            <code>namespaces is forbidden ... at the cluster scope</code> and an empty cluster
+            overview. This creates <code>{derived.clusterReadName}</code> (ClusterRole +
+            ClusterRoleBinding) alongside the account.
+          </Typography>
+          <RadioGroup
+            value={uiAccess}
+            onChange={e => setUiAccess(e.target.value as UiAccessLevel)}
+          >
+            {UI_ACCESS_LEVELS.map(l => (
+              <FormControlLabel
+                key={l.value}
+                value={l.value}
+                control={<Radio />}
+                sx={{ alignItems: 'flex-start', mb: 0.5 }}
+                label={
+                  <Box sx={{ pt: 0.75 }}>
+                    <Typography variant="body2">
+                      {l.label}
+                      {l.danger && (
+                        <Chip
+                          label="privilege escalation"
+                          size="small"
+                          color="warning"
+                          sx={{ ml: 1 }}
+                        />
+                      )}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {l.description}
+                    </Typography>
+                  </Box>
+                }
+              />
+            ))}
+          </RadioGroup>
+          {uiAccess === 'kubelet' && (
+            <Alert severity="warning" sx={{ mt: 1 }}>
+              <AlertTitle>nodes/proxy exposes the kubelet API.</AlertTitle>
+              Anyone holding this token can reach kubelet endpoints on every node and read
+              logs and metadata of pods in namespaces they were never granted. Pick this only
+              if the disk and PVC usage panels are worth that.
+            </Alert>
+          )}
+          {uiAccess === 'none' && scope === 'Namespaced' && (
+            <Alert severity="info" sx={{ mt: 1 }}>
+              With no cluster-scoped read, this account works with{' '}
+              <code>kubectl -n &lt;namespace&gt;</code> but Headlamp will not be able to list
+              namespaces. Set the cluster's <em>Allowed namespaces</em> in Headlamp if you want
+              to keep it this tight.
+            </Alert>
+          )}
         </Paper>
 
         <Paper variant="outlined" sx={{ p: 2 }}>
@@ -628,7 +705,7 @@ async function reconcileEdit(current: ManagedAccount, desired: BuildInput): Prom
 
   const desiredRoleKind = roleKind(desired);
   const roleKindChanged =
-    (current.bindingNamespaces.length > 0 || current.clusterBindingName) &&
+    (current.bindings.length > 0 || current.clusterBindingName) &&
     current.roleKind !== desiredRoleKind;
 
   // Apply-first, prune-after: if any step fails, the cluster is left over-permissioned
@@ -638,41 +715,39 @@ async function reconcileEdit(current: ManagedAccount, desired: BuildInput): Prom
   if (roleKindChanged) {
     // roleRef is immutable on (Cluster)RoleBinding, so a kind change forces a delete+recreate
     // of every binding. The new Role/ClusterRole was just created above (different kind, same
-    // name → coexists with the old one), so the gap window is just bindings, not the role.
-    for (const [i, ns] of current.bindingNamespaces.entries()) {
-      const name = current.bindingNames[i] ?? bindingName(`${current.name}-binding`, ns);
-      await deleteResource('rbac.authorization.k8s.io/v1', 'RoleBinding', name, ns);
+    // name, so the two coexist), which keeps the gap window to bindings only.
+    for (const b of current.bindings) {
+      await deleteResource('rbac.authorization.k8s.io/v1', 'RoleBinding', b.name, b.namespace);
     }
     if (current.clusterBindingName) {
-      await deleteResource(
-        'rbac.authorization.k8s.io/v1',
-        'ClusterRoleBinding',
-        current.clusterBindingName,
-      );
+      await deleteResource('rbac.authorization.k8s.io/v1', 'ClusterRoleBinding', current.clusterBindingName);
     }
   }
 
   await applyResources(desiredBindings);
 
-  // Only prune after the desired state is in place.
-  // (When roleKindChanged, the kindChanged block above already removed every old binding;
-  // anything still desired was just recreated in Phase 3, so this loop is a no-op for it.)
-  for (const [i, ns] of current.bindingNamespaces.entries()) {
-    const name = current.bindingNames[i] ?? bindingName(`${current.name}-binding`, ns);
-    const key = `RoleBinding/${ns}/${name}`;
-    if (!desiredKeys.has(key)) {
-      await deleteResource('rbac.authorization.k8s.io/v1', 'RoleBinding', name, ns);
+  // The cluster-scoped read bundle stands on its own: apply it when wanted, remove it when
+  // the level drops back to none.
+  const uiResources = buildUiClusterRead(desired);
+  if (uiResources.length > 0) {
+    await applyResources(uiResources);
+  } else if (current.uiAccess !== 'none') {
+    await deleteUiClusterRead(current.clusterReadName);
+  }
+
+  // Prune only once the desired state is in place. Namespace and name travel together in
+  // `bindings`; pairing two separately sorted arrays by index used to delete a name that
+  // did not exist in that namespace (swallowed as a 404) and leave the real binding live.
+  for (const b of current.bindings) {
+    if (!desiredKeys.has(`RoleBinding/${b.namespace}/${b.name}`)) {
+      await deleteResource('rbac.authorization.k8s.io/v1', 'RoleBinding', b.name, b.namespace);
     }
   }
-  if (current.clusterBindingName) {
-    const key = `ClusterRoleBinding//${current.clusterBindingName}`;
-    if (!desiredKeys.has(key)) {
-      await deleteResource(
-        'rbac.authorization.k8s.io/v1',
-        'ClusterRoleBinding',
-        current.clusterBindingName,
-      );
-    }
+  if (
+    current.clusterBindingName &&
+    !desiredKeys.has(`ClusterRoleBinding//${current.clusterBindingName}`)
+  ) {
+    await deleteResource('rbac.authorization.k8s.io/v1', 'ClusterRoleBinding', current.clusterBindingName);
   }
 
   if (roleKindChanged) {
@@ -680,29 +755,22 @@ async function reconcileEdit(current: ManagedAccount, desired: BuildInput): Prom
   }
 }
 
+async function deleteUiClusterRead(name: string): Promise<void> {
+  await deleteResource('rbac.authorization.k8s.io/v1', 'ClusterRoleBinding', name);
+  await deleteResource('rbac.authorization.k8s.io/v1', 'ClusterRole', name);
+}
+
 async function cascadeDelete(account: ManagedAccount): Promise<void> {
-  for (const ns of account.bindingNamespaces) {
-    await deleteResource(
-      'rbac.authorization.k8s.io/v1',
-      'RoleBinding',
-      bindingName(`${account.name}-binding`, ns),
-      ns,
-    );
+  // Delete the bindings actually discovered rather than names rebuilt from the convention,
+  // so a renamed or hand-made binding is not left behind still granting access.
+  for (const b of account.bindings) {
+    await deleteResource('rbac.authorization.k8s.io/v1', 'RoleBinding', b.name, b.namespace);
   }
   if (account.clusterBindingName) {
-    await deleteResource(
-      'rbac.authorization.k8s.io/v1',
-      'ClusterRoleBinding',
-      account.clusterBindingName,
-    );
+    await deleteResource('rbac.authorization.k8s.io/v1', 'ClusterRoleBinding', account.clusterBindingName);
   }
-  if (account.roleKind === 'ClusterRole') {
-    await deleteResource('rbac.authorization.k8s.io/v1', 'ClusterRole', account.roleName);
-  } else {
-    for (const ns of account.bindingNamespaces) {
-      await deleteResource('rbac.authorization.k8s.io/v1', 'Role', account.roleName, ns);
-    }
-  }
+  await deleteRole(account);
+  await deleteUiClusterRead(account.clusterReadName);
   await deleteResource('v1', 'Secret', account.tokenSecretName, account.namespace);
   await deleteResource('v1', 'ServiceAccount', account.name, account.namespace);
 }
@@ -711,8 +779,8 @@ async function deleteRole(account: ManagedAccount): Promise<void> {
   if (account.roleKind === 'ClusterRole') {
     await deleteResource('rbac.authorization.k8s.io/v1', 'ClusterRole', account.roleName);
   } else {
-    for (const ns of account.bindingNamespaces) {
-      await deleteResource('rbac.authorization.k8s.io/v1', 'Role', account.roleName, ns);
+    for (const b of account.bindings) {
+      await deleteResource('rbac.authorization.k8s.io/v1', 'Role', account.roleName, b.namespace);
     }
   }
 }

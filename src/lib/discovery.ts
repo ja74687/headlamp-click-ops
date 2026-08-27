@@ -1,8 +1,36 @@
 import { request } from '@kinvolk/headlamp-plugin/lib/ApiProxy';
 import { Verb } from './catalog';
-import { MANAGED_BY_LABEL, MANAGED_BY_VALUE, Rule } from './rbac';
+import {
+  levelFromUiAccessRules,
+  MANAGED_BY_LABEL,
+  MANAGED_BY_VALUE,
+  PURPOSE_LABEL,
+  PURPOSE_UI_CLUSTER_READ,
+  Rule,
+  UiAccessLevel,
+} from './rbac';
 
 const LABEL_SELECTOR = `${MANAGED_BY_LABEL}=${MANAGED_BY_VALUE}`;
+
+/** Flip to true when debugging discovery; it logs every binding and rule it walks. */
+const DEBUG = false;
+
+function debug(...args: unknown[]): void {
+  if (!DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.log('[access-builder]', ...args);
+}
+
+function warn(...args: unknown[]): void {
+  // eslint-disable-next-line no-console
+  console.warn('[access-builder]', ...args);
+}
+
+/** One RoleBinding, keeping namespace and name paired — they must never drift apart. */
+export type BindingRef = {
+  namespace: string;
+  name: string;
+};
 
 export type ManagedAccount = {
   name: string;
@@ -11,8 +39,11 @@ export type ManagedAccount = {
   roleKind: 'Role' | 'ClusterRole';
   roleName: string;
   tokenSecretName: string;
+  clusterReadName: string;
+  uiAccess: UiAccessLevel;
+  bindings: BindingRef[];
+  /** Derived from `bindings`, for display only. */
   bindingNamespaces: string[];
-  bindingNames: string[];
   clusterBindingName?: string;
   rules: Rule[];
 };
@@ -24,8 +55,7 @@ async function listManaged(url: string): Promise<AnyObject[]> {
     const res: any = await request(`${url}?labelSelector=${encodeURIComponent(LABEL_SELECTOR)}`);
     return (res?.items as AnyObject[]) ?? [];
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn('[access-builder] listManaged failed', url, err);
+    warn('listManaged failed', url, err);
     return [];
   }
 }
@@ -35,8 +65,7 @@ async function listAll(url: string): Promise<AnyObject[]> {
     const res: any = await request(url);
     return (res?.items as AnyObject[]) ?? [];
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn('[access-builder] listAll failed', url, err);
+    warn('listAll failed', url, err);
     return [];
   }
 }
@@ -49,12 +78,21 @@ async function getOne(url: string): Promise<AnyObject | null> {
   }
 }
 
+function isUiClusterRead(obj: AnyObject): boolean {
+  return obj?.metadata?.labels?.[PURPOSE_LABEL] === PURPOSE_UI_CLUSTER_READ;
+}
+
 export async function listManagedAccounts(): Promise<ManagedAccount[]> {
-  const [serviceAccounts, roleBindings, clusterRoleBindings] = await Promise.all([
+  const [serviceAccounts, roleBindingsRaw, clusterRoleBindingsRaw] = await Promise.all([
     listManaged('/api/v1/serviceaccounts'),
     listAll('/apis/rbac.authorization.k8s.io/v1/rolebindings'),
     listAll('/apis/rbac.authorization.k8s.io/v1/clusterrolebindings'),
   ]);
+
+  // The cluster-read bundle names the SA as a subject, so it would otherwise be picked up
+  // as the account's own binding and flip its scope to Cluster.
+  const roleBindings = roleBindingsRaw.filter(rb => !isUiClusterRead(rb));
+  const clusterRoleBindings = clusterRoleBindingsRaw.filter(crb => !isUiClusterRead(crb));
 
   const accounts: ManagedAccount[] = [];
 
@@ -62,6 +100,7 @@ export async function listManagedAccounts(): Promise<ManagedAccount[]> {
     const saName: string = sa.metadata.name;
     const saNamespace: string = sa.metadata.namespace;
     const bindingNamePrefix = `${saName}-binding`;
+    const clusterReadName = `${saName}-cluster-read`;
 
     const matchesAccount = (obj: AnyObject): boolean => {
       if (Array.isArray(obj.subjects)) {
@@ -97,16 +136,10 @@ export async function listManagedAccounts(): Promise<ManagedAccount[]> {
       }
     }
 
-    // eslint-disable-next-line no-console
-    console.log('[access-builder] per-account', {
+    debug('per-account', {
       sa: `${saNamespace}/${saName}`,
-      matchedRBs: matchedRBs.map(rb => ({
-        name: `${rb.metadata.namespace}/${rb.metadata.name}`,
-        subjects: rb.subjects,
-      })),
-      matchedCRB: matchedCRB
-        ? { name: matchedCRB.metadata.name, subjects: matchedCRB.subjects }
-        : null,
+      matchedRBs: matchedRBs.map(rb => `${rb.metadata.namespace}/${rb.metadata.name}`),
+      matchedCRB: matchedCRB?.metadata?.name ?? null,
     });
 
     let roleKind: 'Role' | 'ClusterRole' = 'Role';
@@ -134,6 +167,17 @@ export async function listManagedAccounts(): Promise<ManagedAccount[]> {
       }
     }
 
+    // Sort namespace and name together. Sorting them as two independent arrays used to
+    // pair binding[i] with the wrong namespace, so pruning deleted a non-existent name
+    // (silently swallowed as 404) and left the real binding — and its access — behind.
+    const bindings: BindingRef[] = matchedRBs
+      .map(rb => ({ namespace: rb.metadata.namespace as string, name: rb.metadata.name as string }))
+      .sort((a, b) => a.namespace.localeCompare(b.namespace));
+
+    const clusterReadRole = await getOne(
+      `/apis/rbac.authorization.k8s.io/v1/clusterroles/${clusterReadName}`,
+    );
+
     accounts.push({
       name: saName,
       namespace: saNamespace,
@@ -141,25 +185,27 @@ export async function listManagedAccounts(): Promise<ManagedAccount[]> {
       roleKind,
       roleName,
       tokenSecretName: `${saName}-token`,
-      bindingNamespaces: matchedRBs.map(rb => rb.metadata.namespace).sort(),
-      bindingNames: matchedRBs.map(rb => rb.metadata.name),
+      clusterReadName,
+      uiAccess: clusterReadRole
+        ? levelFromUiAccessRules(normaliseRules(clusterReadRole.rules ?? []))
+        : 'none',
+      bindings,
+      bindingNamespaces: bindings.map(b => b.namespace),
       clusterBindingName: matchedCRB?.metadata?.name,
       rules,
     });
   }
 
   const sorted = accounts.sort((a, b) => a.name.localeCompare(b.name));
-  // eslint-disable-next-line no-console
-  console.log('[access-builder] discovery summary', {
+  debug('discovery summary', {
     serviceAccountsFound: serviceAccounts.length,
-    roleBindingsFound: roleBindings.length,
-    clusterRoleBindingsFound: clusterRoleBindings.length,
     accounts: sorted.map(a => ({
       name: a.name,
       ns: a.namespace,
       scope: a.scope,
       roleKind: a.roleKind,
       boundNamespaces: a.bindingNamespaces,
+      uiAccess: a.uiAccess,
       ruleCount: a.rules.length,
     })),
   });

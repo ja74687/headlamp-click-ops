@@ -3,11 +3,62 @@ import { Verb } from './catalog';
 export const MANAGED_BY_LABEL = 'app.kubernetes.io/managed-by';
 export const MANAGED_BY_VALUE = 'headlamp-access-builder';
 
+/**
+ * Marks the extra cluster-read bundle. Discovery must skip anything carrying it, otherwise
+ * the ClusterRoleBinding (which lists the SA as a subject) would be mistaken for the
+ * account's own binding and the account would show up as cluster-wide.
+ */
+export const PURPOSE_LABEL = 'access-builder/purpose';
+export const PURPOSE_UI_CLUSTER_READ = 'ui-cluster-read';
+
 export type Rule = {
   apiGroups: string[];
   resources: string[];
   verbs: Verb[];
 };
+
+/**
+ * How much cluster-scoped read access to grant on top of the namespaced bindings.
+ *
+ * A RoleBinding only ever grants inside its own namespace, even when it points at a
+ * ClusterRole. Anything cluster-scoped — listing namespaces, reading nodes, metrics —
+ * therefore needs a real ClusterRoleBinding, or the account cannot use the Headlamp UI
+ * at all ("namespaces is forbidden ... at the cluster scope"). Levels are cumulative.
+ */
+export type UiAccessLevel = 'none' | 'namespaces' | 'metrics' | 'kubelet';
+
+export const UI_ACCESS_LEVELS: {
+  value: UiAccessLevel;
+  label: string;
+  description: string;
+  danger?: boolean;
+}[] = [
+  {
+    value: 'none',
+    label: 'None',
+    description:
+      'Namespaced access only. Headlamp will show "namespaces is forbidden" and the cluster overview stays empty.',
+  },
+  {
+    value: 'namespaces',
+    label: 'Namespace list (recommended)',
+    description:
+      'get/list/watch on namespaces cluster-wide. The minimum for Headlamp to render its namespace picker. Reveals namespace names only.',
+  },
+  {
+    value: 'metrics',
+    label: '+ nodes and metrics',
+    description:
+      'Adds nodes and metrics.k8s.io so the cluster CPU/memory overview works. Pod metrics are cluster-wide, so pod names from other namespaces become visible.',
+  },
+  {
+    value: 'kubelet',
+    label: '+ kubelet stats (disk usage)',
+    description:
+      'Adds get on nodes/proxy for the disk and PVC usage panels. This grants access to the kubelet API, through which logs and metadata of every pod on a node can be read — a genuine privilege escalation.',
+    danger: true,
+  },
+];
 
 export type BuildInput = {
   scope: 'Namespaced' | 'Cluster';
@@ -17,6 +68,8 @@ export type BuildInput = {
   roleName: string;
   bindingNamePrefix: string;
   tokenSecretName: string;
+  clusterReadName: string;
+  uiAccess: UiAccessLevel;
   rules: Rule[];
 };
 
@@ -134,22 +187,93 @@ export function buildBindings(input: BuildInput) {
   }));
 }
 
+export function uiAccessRules(level: UiAccessLevel): Rule[] {
+  if (level === 'none') return [];
+  const rules: Rule[] = [
+    { apiGroups: [''], resources: ['namespaces'], verbs: ['get', 'list', 'watch'] },
+  ];
+  if (level === 'metrics' || level === 'kubelet') {
+    rules.push({ apiGroups: [''], resources: ['nodes'], verbs: ['get', 'list', 'watch'] });
+    rules.push({
+      apiGroups: ['metrics.k8s.io'],
+      resources: ['nodes', 'pods'],
+      verbs: ['get', 'list'],
+    });
+  }
+  if (level === 'kubelet') {
+    rules.push({ apiGroups: [''], resources: ['nodes/proxy'], verbs: ['get'] });
+  }
+  return rules;
+}
+
+export function levelFromUiAccessRules(rules: Rule[]): UiAccessLevel {
+  if (!rules || rules.length === 0) return 'none';
+  const has = (group: string, resource: string) =>
+    rules.some(r => r.apiGroups.includes(group) && r.resources.includes(resource));
+  if (has('', 'nodes/proxy')) return 'kubelet';
+  if (has('metrics.k8s.io', 'nodes') || has('', 'nodes')) return 'metrics';
+  if (has('', 'namespaces')) return 'namespaces';
+  return 'none';
+}
+
+/**
+ * The extra cluster-scoped read bundle. Deliberately does NOT carry the
+ * `access-builder/account` label — see PURPOSE_LABEL.
+ */
+export function buildUiClusterRead(input: BuildInput) {
+  const rules = uiAccessRules(input.uiAccess);
+  if (rules.length === 0) return [];
+  const labels = {
+    ...managedLabels,
+    [PURPOSE_LABEL]: PURPOSE_UI_CLUSTER_READ,
+    'access-builder/for-account': input.serviceAccountName,
+  };
+  return [
+    {
+      apiVersion: 'rbac.authorization.k8s.io/v1',
+      kind: 'ClusterRole',
+      metadata: { name: input.clusterReadName, labels },
+      rules,
+    },
+    {
+      apiVersion: 'rbac.authorization.k8s.io/v1',
+      kind: 'ClusterRoleBinding',
+      metadata: { name: input.clusterReadName, labels },
+      subjects: [
+        {
+          kind: 'ServiceAccount',
+          name: input.serviceAccountName,
+          namespace: input.tokenNamespace,
+        },
+      ],
+      roleRef: {
+        apiGroup: 'rbac.authorization.k8s.io',
+        kind: 'ClusterRole',
+        name: input.clusterReadName,
+      },
+    },
+  ];
+}
+
 export function buildAll(input: BuildInput) {
   return [
     buildServiceAccount(input),
     buildTokenSecret(input),
     buildRole(input),
     ...buildBindings(input),
+    ...buildUiClusterRead(input),
   ];
 }
 
+/** Kubernetes object names are DNS subdomains: lowercase, max 253 chars. */
 export function sanitizeName(raw: string): string {
   const cleaned = raw
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
-  return cleaned || 'access';
+  // Leave room for the longest suffix we append (`-cluster-read`).
+  return cleaned.slice(0, 240).replace(/-$/, '') || 'access';
 }
 
 export function deriveNames(serviceAccountName: string) {
@@ -159,6 +283,7 @@ export function deriveNames(serviceAccountName: string) {
     roleName: `${base}-role`,
     bindingNamePrefix: `${base}-binding`,
     tokenSecretName: `${base}-token`,
+    clusterReadName: `${base}-cluster-read`,
   };
 }
 

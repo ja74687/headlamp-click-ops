@@ -36,6 +36,16 @@ The plugin adds **four pages** to Headlamp's sidebar:
   / cluster admin) or with a manual API-groups × resources × verbs editor.
 - Live YAML preview, one-click apply, creates the SA + Role/ClusterRole +
   binding(s) + long-lived token Secret.
+- **Headlamp UI access**: a RoleBinding only grants access inside its own
+  namespace, even when it points at a ClusterRole — so listing namespaces,
+  reading nodes and reading metrics (all cluster-scoped) would fail with
+  *namespaces is forbidden ... at the cluster scope* and leave the cluster
+  overview empty. Pick a level and the plugin creates a separate
+  `<name>-cluster-read` ClusterRole + ClusterRoleBinding next to the account:
+  namespace list only (the recommended minimum), plus nodes and metrics, or
+  plus `nodes/proxy` for disk stats. The last one is flagged as privilege
+  escalation, because kubelet access leaks logs and metadata of pods in
+  namespaces the account was never granted.
 - Auto-detects the API server URL from `kube-public/cluster-info` or the
   `kubernetes` Endpoints.
 - Downloads a ready-to-use `.kubeconfig` (CA + token already embedded) — works
@@ -179,6 +189,17 @@ If you're new to Kubernetes RBAC, the cheat sheet the plugin follows:
 For multi-namespace access, the plugin uses the standard Kubernetes trick:
 one ClusterRole + N RoleBindings (one per namespace). That way the account
 sees exactly those N namespaces, not the whole cluster.
+
+The catch worth knowing: **a RoleBinding never grants anything cluster-scoped**,
+even when its `roleRef` is a ClusterRole. Rules about `namespaces`, `nodes` or
+`metrics.k8s.io` sitting in that ClusterRole are simply dead. Anything the user
+needs cluster-wide has to come from a real ClusterRoleBinding — which is exactly
+what the *Headlamp UI access* option creates. Without it the account works fine
+with `kubectl -n <namespace>` but Headlamp cannot even list namespaces.
+
+If you would rather not grant a cluster-wide namespace list at all, set
+*Allowed namespaces* in Headlamp's cluster settings instead and leave UI access
+at *None*.
 
 ## Releasing a new version (maintainer)
 

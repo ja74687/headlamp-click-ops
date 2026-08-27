@@ -18,6 +18,33 @@ import {
 } from '@mui/material';
 import React, { useCallback, useEffect, useState } from 'react';
 import { listManagedAccounts, ManagedAccount } from './lib/discovery';
+import { UiAccessLevel } from './lib/rbac';
+
+const UI_ACCESS_LABELS: Record<
+  UiAccessLevel,
+  { label: string; hint: string; color: 'default' | 'success' | 'warning' }
+> = {
+  none: {
+    label: 'none',
+    hint: 'No cluster-scoped read. Headlamp cannot list namespaces for this account.',
+    color: 'default',
+  },
+  namespaces: {
+    label: 'namespaces',
+    hint: 'Can list namespaces cluster-wide — enough for Headlamp to navigate.',
+    color: 'success',
+  },
+  metrics: {
+    label: '+ metrics',
+    hint: 'Namespaces plus nodes and metrics.k8s.io — the cluster overview works.',
+    color: 'success',
+  },
+  kubelet: {
+    label: '+ kubelet',
+    hint: 'Also grants nodes/proxy, which exposes the kubelet API. Privilege escalation.',
+    color: 'warning',
+  },
+};
 
 export type ManagedAccountsListProps = {
   onEdit: (account: ManagedAccount) => void;
@@ -101,6 +128,7 @@ export default function ManagedAccountsList({
               <TableCell>Name</TableCell>
               <TableCell>Scope</TableCell>
               <TableCell>Namespaces</TableCell>
+              <TableCell>UI access</TableCell>
               <TableCell>Token Secret</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -139,6 +167,16 @@ export default function ManagedAccountsList({
                       ))}
                     </Stack>
                   )}
+                </TableCell>
+                <TableCell>
+                  <Tooltip title={UI_ACCESS_LABELS[a.uiAccess].hint}>
+                    <Chip
+                      size="small"
+                      label={UI_ACCESS_LABELS[a.uiAccess].label}
+                      color={UI_ACCESS_LABELS[a.uiAccess].color}
+                      variant={a.uiAccess === 'none' ? 'outlined' : 'filled'}
+                    />
+                  </Tooltip>
                 </TableCell>
                 <TableCell>
                   <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
