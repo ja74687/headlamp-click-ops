@@ -22,6 +22,7 @@ import {
   FormLabel,
   IconButton,
   LinearProgress,
+  MenuItem,
   Paper,
   Radio,
   RadioGroup,
@@ -57,6 +58,13 @@ import {
   UiAccessLevel,
   validateInput,
 } from './lib/rbac';
+import {
+  fetchClusterCaBase64,
+  formatExpiry,
+  requestToken,
+  TOKEN_LIFETIMES,
+  wasClamped,
+} from './lib/tokenRequest';
 import ManagedAccountsList from './ManagedAccountsList';
 
 const ALL_API_GROUPS = Array.from(new Set(RESOURCE_CATALOG.map(r => r.group))).sort();
@@ -82,6 +90,9 @@ export default function AccessBuilderPage() {
   const [serverUrl, setServerUrl] = useState<string>('');
   const [insecure, setInsecure] = useState<boolean>(false);
   const [uiAccess, setUiAccess] = useState<UiAccessLevel>('namespaces');
+  const [tokenMode, setTokenMode] = useState<'longLived' | 'expiring'>('longLived');
+  const [tokenLifetime, setTokenLifetime] = useState<number>(30 * 24 * 3600);
+  const [tokenNotice, setTokenNotice] = useState<string | null>(null);
 
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -207,26 +218,37 @@ export default function AccessBuilderPage() {
     }
   }
 
-  function handleDownload() {
+  async function handleDownload() {
     if (!token) return;
     if (!serverUrl && !insecure) {
       setApplyError('Set the API server URL (e.g. https://kube-api.example:6443) before downloading.');
       return;
     }
-    const cfg = buildKubeconfig({
-      clusterName,
-      serverUrl: serverUrl || 'https://kubernetes.default.svc',
-      caCrtBase64: token.caCrtBase64,
-      userName: derived.serviceAccountName,
-      token: token.token,
-      namespace:
-        (scope === 'Namespaced' && selectedNamespaces[0]) ||
-        token.namespace ||
-        tokenNamespace ||
-        'default',
-      insecureSkipTlsVerify: insecure,
-    });
-    downloadText(`${derived.serviceAccountName}.kubeconfig`, cfg);
+    setApplyError(null);
+    try {
+      const creds = await resolveCredentials(
+        tokenNamespace,
+        derived.serviceAccountName,
+        derived.tokenSecretName,
+      );
+      if (!creds) return;
+      const cfg = buildKubeconfig({
+        clusterName,
+        serverUrl: serverUrl || 'https://kubernetes.default.svc',
+        caCrtBase64: creds.caCrtBase64,
+        userName: derived.serviceAccountName,
+        token: creds.token,
+        namespace:
+          (scope === 'Namespaced' && selectedNamespaces[0]) ||
+          creds.namespace ||
+          tokenNamespace ||
+          'default',
+        insecureSkipTlsVerify: insecure,
+      });
+      downloadText(`${derived.serviceAccountName}.kubeconfig`, cfg);
+    } catch (err) {
+      setApplyError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   function handleCopyYaml() {
@@ -242,8 +264,45 @@ export default function AccessBuilderPage() {
     await downloadForAccount(account, serverUrl);
   }
 
+  /**
+   * Either read the long-lived Secret or mint a fresh expiring token. Both paths still need
+   * the cluster CA; only the Secret carries one, so TokenRequest has to look it up.
+   */
+  async function resolveCredentials(
+    accountNamespace: string,
+    accountName: string,
+    tokenSecretName: string,
+  ): Promise<{ token: string; caCrtBase64: string; namespace: string } | null> {
+    if (tokenMode === 'expiring') {
+      const issued = await requestToken(accountNamespace, accountName, tokenLifetime);
+      const ca = await fetchClusterCaBase64(accountNamespace);
+      if (!ca && !insecure) {
+        setApplyError(
+          'Could not read the cluster CA (kube-root-ca.crt or kube-public/cluster-info). ' +
+            'Tick insecure-skip-tls-verify or use a long-lived token.',
+        );
+        return null;
+      }
+      setTokenNotice(
+        `Token expires in ${formatExpiry(issued.expirationTimestamp)}` +
+          (wasClamped(issued)
+            ? ' — the API server capped it below the requested lifetime.'
+            : '.'),
+      );
+      return { token: issued.token, caCrtBase64: ca ?? '', namespace: accountNamespace };
+    }
+    const tok = await fetchToken(accountNamespace, tokenSecretName);
+    if (!tok) return null;
+    setTokenNotice(null);
+    return { token: tok.token, caCrtBase64: tok.caCrtBase64, namespace: tok.namespace };
+  }
+
   async function downloadForAccount(account: ManagedAccount, url: string) {
-    const tok = await fetchToken(account.namespace, account.tokenSecretName);
+    const tok = await resolveCredentials(
+      account.namespace,
+      account.name,
+      account.tokenSecretName,
+    );
     if (!tok) {
       setApplyError(
         `Token secret ${account.namespace}/${account.tokenSecretName} has no token yet.`,
@@ -527,6 +586,65 @@ export default function AccessBuilderPage() {
           {detectError && (
             <Alert severity="warning" sx={{ mt: 1 }} onClose={() => setDetectError(null)}>
               {detectError}
+            </Alert>
+          )}
+
+          <Divider sx={{ my: 2 }} />
+
+          <Typography variant="subtitle2" gutterBottom>
+            Token
+          </Typography>
+          <RadioGroup
+            row
+            value={tokenMode}
+            onChange={e => {
+              setTokenMode(e.target.value as 'longLived' | 'expiring');
+              setTokenNotice(null);
+            }}
+          >
+            <FormControlLabel
+              value="longLived"
+              control={<Radio />}
+              label="Long-lived (Secret)"
+            />
+            <FormControlLabel
+              value="expiring"
+              control={<Radio />}
+              label="Expiring (TokenRequest)"
+            />
+          </RadioGroup>
+          {tokenMode === 'expiring' ? (
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="flex-start">
+              <TextField
+                select
+                size="small"
+                label="Valid for"
+                value={tokenLifetime}
+                onChange={e => setTokenLifetime(Number(e.target.value))}
+                sx={{ minWidth: 180 }}
+              >
+                {TOKEN_LIFETIMES.map(l => (
+                  <MenuItem key={l.seconds} value={l.seconds}>
+                    {l.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <Typography variant="caption" color="text.secondary" sx={{ pt: 1, flex: 1 }}>
+                A fresh token is minted at download time and the API server enforces the
+                expiry. It cannot be renewed from the kubeconfig — when it runs out, come back
+                here and download again. The server may grant less than you ask for, and the
+                token Secret is still created either way.
+              </Typography>
+            </Stack>
+          ) : (
+            <Typography variant="caption" color="text.secondary">
+              Never expires and stays valid until the Secret or the ServiceAccount is deleted.
+              Convenient, but nothing revokes it if the file leaks.
+            </Typography>
+          )}
+          {tokenNotice && (
+            <Alert severity="info" sx={{ mt: 1 }} onClose={() => setTokenNotice(null)}>
+              {tokenNotice}
             </Alert>
           )}
           <Alert severity="info" icon={<Icon icon="mdi:lightbulb-on-outline" />} sx={{ mt: 2 }}>

@@ -34,6 +34,7 @@ function useDiscovered() {
 
 const OWN_ENTRIES = new Set([
   'access-builder',
+  'namespace-access',
   'resource-builder',
   'cluster-monitor',
 ]);

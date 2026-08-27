@@ -6,6 +6,7 @@ import {
 import AccessBuilderPage from './AccessBuilderPage';
 import ClusterMonitorPage from './ClusterMonitorPage';
 import { getCurrentSettings, recordDiscovered } from './lib/sidebarSettings';
+import NamespaceAccessPage from './NamespaceAccessPage';
 import ResourceBuilderPage from './ResourceBuilderPage';
 import SidebarSettingsPage from './SidebarSettingsPage';
 
@@ -78,6 +79,25 @@ registerRoute({
   exact: true,
   useClusterURL: true,
   component: () => <AccessBuilderPage />,
+});
+
+registerSidebarEntry({
+  parent: null,
+  sidebar: 'IN-CLUSTER',
+  name: 'namespace-access',
+  label: 'Namespace Access',
+  url: '/namespace-access',
+  icon: 'mdi:account-search-outline',
+  useClusterURL: true,
+});
+
+registerRoute({
+  path: '/namespace-access',
+  sidebar: 'namespace-access',
+  name: 'namespace-access',
+  exact: true,
+  useClusterURL: true,
+  component: () => <NamespaceAccessPage />,
 });
 
 registerSidebarEntry({

@@ -16,7 +16,12 @@ export const VERBS = [
   'deletecollection',
 ] as const;
 
-export type Verb = (typeof VERBS)[number];
+/**
+ * VERBS is what the rule editor offers. A rule read back from the cluster can also carry the
+ * `*` wildcard, which no checkbox produces but which any hand-written role may use — so the
+ * type has to admit it, or every read path is casting a lie.
+ */
+export type Verb = (typeof VERBS)[number] | '*';
 
 export const RESOURCE_CATALOG: ApiResource[] = [
   { group: '', resource: 'pods', label: 'Pods', scope: 'Namespaced' },
