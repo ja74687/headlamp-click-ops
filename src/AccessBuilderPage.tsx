@@ -33,6 +33,7 @@ import {
 } from '@mui/material';
 import yaml from 'js-yaml';
 import React, { useEffect, useMemo, useState } from 'react';
+import { ImportOutcome } from './ImportAccountsDialog';
 import {
   applyResources,
   deleteResource,
@@ -44,6 +45,8 @@ import {
 import { PRESETS, RESOURCE_CATALOG, Verb, VERBS } from './lib/catalog';
 import { ManagedAccount } from './lib/discovery';
 import { buildKubeconfig, downloadText } from './lib/kubeconfig';
+import { planChanges, PlannedChange } from './lib/plan';
+import { PortableAccount } from './lib/portable';
 import {
   buildAll,
   buildBindings,
@@ -66,6 +69,8 @@ import {
   wasClamped,
 } from './lib/tokenRequest';
 import ManagedAccountsList from './ManagedAccountsList';
+import OrphansPanel from './OrphansPanel';
+import PlanDialog from './PlanDialog';
 
 const ALL_API_GROUPS = Array.from(new Set(RESOURCE_CATALOG.map(r => r.group))).sort();
 
@@ -93,6 +98,7 @@ export default function AccessBuilderPage() {
   const [tokenMode, setTokenMode] = useState<'longLived' | 'expiring'>('longLived');
   const [tokenLifetime, setTokenLifetime] = useState<number>(30 * 24 * 3600);
   const [tokenNotice, setTokenNotice] = useState<string | null>(null);
+  const [plan, setPlan] = useState<PlannedChange[] | null>(null);
 
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -194,7 +200,20 @@ export default function AccessBuilderPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  /**
+   * Editing is the case where a click can take access away, so it goes through the plan
+   * first. Creating cannot delete anything, so it applies straight away.
+   */
+  function handleApplyClick() {
+    if (mode.kind === 'edit') {
+      setPlan(planChanges(mode.account, input));
+      return;
+    }
+    handleApply();
+  }
+
   async function handleApply() {
+    setPlan(null);
     setApplyError(null);
     setSuccessMessage(null);
     setApplying(true);
@@ -249,6 +268,38 @@ export default function AccessBuilderPage() {
     } catch (err) {
       setApplyError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * Applied one account at a time: a failure on the third should not hide that the first two
+   * landed, so each outcome is reported separately rather than aborting the batch.
+   */
+  async function handleImport(imported: PortableAccount[]): Promise<ImportOutcome[]> {
+    const outcomes: ImportOutcome[] = [];
+    for (const acc of imported) {
+      try {
+        const names = deriveNames(acc.name);
+        await applyResources(
+          buildAll({
+            scope: acc.scope,
+            namespaces: acc.scope === 'Namespaced' ? acc.namespaces : [],
+            tokenNamespace: acc.namespace,
+            ...names,
+            uiAccess: acc.uiAccess,
+            rules: acc.rules,
+          }),
+        );
+        outcomes.push({ name: acc.name, ok: true });
+      } catch (err) {
+        outcomes.push({
+          name: acc.name,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    setRefreshKey(k => k + 1);
+    return outcomes;
   }
 
   function handleCopyYaml() {
@@ -349,8 +400,12 @@ export default function AccessBuilderPage() {
             if (mode.kind === 'edit' && mode.account.name === a.name) resetForm();
           }}
           onDownload={handleDownloadForExisting}
+          onImport={handleImport}
+          availableNamespaces={namespaceOptions}
           refreshKey={refreshKey}
         />
+
+        <OrphansPanel refreshKey={refreshKey} />
 
         <Paper variant="outlined" sx={{ p: 2 }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between">
@@ -739,7 +794,7 @@ export default function AccessBuilderPage() {
             size="large"
             startIcon={<Icon icon={mode.kind === 'edit' ? 'mdi:content-save' : 'mdi:play'} />}
             disabled={errors.length > 0 || applying}
-            onClick={handleApply}
+            onClick={handleApplyClick}
           >
             {mode.kind === 'edit' ? 'Save changes' : 'Apply to cluster'}
           </Button>
@@ -754,6 +809,15 @@ export default function AccessBuilderPage() {
           </Button>
         </Stack>
       </Stack>
+
+      <PlanDialog
+        open={plan !== null}
+        accountName={mode.kind === 'edit' ? mode.account.name : derived.serviceAccountName}
+        changes={plan ?? []}
+        applying={applying}
+        onCancel={() => setPlan(null)}
+        onConfirm={handleApply}
+      />
 
       <Dialog
         open={pendingDownload !== null}

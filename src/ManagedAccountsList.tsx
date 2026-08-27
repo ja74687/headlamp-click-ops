@@ -18,7 +18,10 @@ import {
 } from '@mui/material';
 import React, { useCallback, useEffect, useState } from 'react';
 import AccessCheckDialog from './AccessCheckDialog';
+import ImportAccountsDialog, { ImportOutcome } from './ImportAccountsDialog';
 import { listManagedAccounts, ManagedAccount } from './lib/discovery';
+import { downloadText } from './lib/kubeconfig';
+import { exportBundle, PortableAccount } from './lib/portable';
 import { UiAccessLevel } from './lib/rbac';
 
 const UI_ACCESS_LABELS: Record<
@@ -56,6 +59,8 @@ export type ManagedAccountsListProps = {
   onEdit: (account: ManagedAccount) => void;
   onDelete: (account: ManagedAccount) => Promise<void>;
   onDownload: (account: ManagedAccount) => Promise<void>;
+  onImport: (accounts: PortableAccount[]) => Promise<ImportOutcome[]>;
+  availableNamespaces: string[];
   refreshKey?: number;
 };
 
@@ -63,12 +68,15 @@ export default function ManagedAccountsList({
   onEdit,
   onDelete,
   onDownload,
+  onImport,
+  availableNamespaces,
   refreshKey = 0,
 }: ManagedAccountsListProps) {
   const [accounts, setAccounts] = useState<ManagedAccount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
   const [checking, setChecking] = useState<ManagedAccount | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -107,11 +115,39 @@ export default function ManagedAccountsList({
             ServiceAccounts labelled <code>app.kubernetes.io/managed-by=headlamp-access-builder</code>.
           </Typography>
         </Box>
-        <Tooltip title="Refresh">
-          <IconButton onClick={load} size="small" aria-label="Refresh list">
-            <Icon icon="mdi:refresh" />
-          </IconButton>
-        </Tooltip>
+        <Stack direction="row" spacing={0.5}>
+          <Tooltip title="Export all accounts to a YAML file (no tokens)">
+            <span>
+              <IconButton
+                size="small"
+                aria-label="Export accounts"
+                disabled={!accounts || accounts.length === 0}
+                onClick={() =>
+                  downloadText(
+                    'click-ops-accounts.yaml',
+                    exportBundle(accounts ?? [], new Date().toISOString()),
+                  )
+                }
+              >
+                <Icon icon="mdi:database-export-outline" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Import accounts from an exported file">
+            <IconButton
+              size="small"
+              aria-label="Import accounts"
+              onClick={() => setImporting(true)}
+            >
+              <Icon icon="mdi:database-import-outline" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Refresh">
+            <IconButton onClick={load} size="small" aria-label="Refresh list">
+              <Icon icon="mdi:refresh" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
       </Stack>
 
       {error && (
@@ -258,6 +294,16 @@ export default function ManagedAccountsList({
       )}
 
       <AccessCheckDialog account={checking} onClose={() => setChecking(null)} />
+
+      <ImportAccountsDialog
+        open={importing}
+        availableNamespaces={availableNamespaces}
+        onClose={() => {
+          setImporting(false);
+          load();
+        }}
+        onImport={onImport}
+      />
     </Paper>
   );
 }

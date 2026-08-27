@@ -58,9 +58,10 @@ version/URL/checksum, commits that back to `main`, and creates the GitHub Releas
 
 ## Architecture
 
-A single-bundle Headlamp plugin. `src/index.tsx` is the only entrypoint: it registers four
-sidebar entries + routes (Access Builder, Resource Builder, Cluster Monitor, Sidebar Settings)
-and one `registerSidebarEntryFilter`. Everything else is reached from there.
+A single-bundle Headlamp plugin. `src/index.tsx` is the only entrypoint: it registers five
+sidebar entries + routes (Access Builder, Namespace Access, Resource Builder, Cluster Monitor,
+Sidebar Settings) and one `registerSidebarEntryFilter`. Everything else is reached from there.
+A new page also needs its name adding to `OWN_ENTRIES` in `SidebarSettingsPage.tsx`.
 
 Split of responsibilities:
 
@@ -141,6 +142,26 @@ system:serviceaccount:<ns>:<name>`) rather than re-reading the manifests. `allow
 null it is the operator's own permission to create reviews that is missing, not the account's.
 Checks marked `optional` map to panels that are allowed to stay empty — only a non-optional
 denial means the account cannot use Headlamp.
+
+`src/lib/plan.ts` turns an edit into an explicit list of create/update/recreate/delete steps,
+which the confirm dialog renders. It mirrors `reconcileEdit` and has to stay in step with it —
+the reconciler is the thing that acts, the plan only describes. Both are pure enough to test.
+
+`src/lib/portable.ts` is the export/import format (`version: 1`). It carries permissions only,
+never tokens: an exported file is something people commit. `parseBundle` validates
+defensively — the file comes from outside the cluster and drives RBAC writes, so unknown
+fields are reported rather than coerced.
+
+`src/lib/orphans.ts` finds managed objects whose ServiceAccount is gone, keyed on the account
+*name* (the same key the naming convention and labels use, and what a recreated ServiceAccount
+would collide with). `orderForDeletion` puts bindings before roles so an interrupted cleanup
+leaves a role with no binding, never a binding referencing a deleted role.
+
+`src/lib/tokenRequest.ts` issues short-lived credentials via
+`POST .../serviceaccounts/<name>/token`. Unlike the Secret path it gets no CA back, so the CA
+comes from `kube-root-ca.crt` (every namespace since 1.20) with cluster-info as fallback. The
+API server silently clamps the lifetime to its own maximum — `wasClamped` detects that, and it
+is normal rather than an error.
 
 Long-lived tokens: a `kubernetes.io/service-account-token` Secret is created and `waitForToken`
 polls it (750 ms, 20 s cap) until the controller fills in `token` and `ca.crt`, which then feed

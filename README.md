@@ -23,7 +23,7 @@
 
 ## What it does
 
-The plugin adds **four pages** to Headlamp's sidebar:
+The plugin adds **five pages** to Headlamp's sidebar:
 
 ### Access Builder
 
@@ -58,6 +58,28 @@ The plugin adds **four pages** to Headlamp's sidebar:
 - **Manage view**: lists every account the plugin has created, lets you edit
   rules/namespaces, re-download the kubeconfig, or cascade-delete the whole
   set (SA + Role + bindings + Secret).
+
+- **Diff before save**: editing an account shows exactly what will be created,
+  updated, recreated or deleted before anything is applied — deletions being
+  the part worth seeing, since dropping a namespace takes that access away.
+- **Export / import**: dump every managed account to a YAML file (permissions
+  only, never tokens) to keep in git or replay on another cluster.
+- **Leftovers**: finds objects the plugin created whose ServiceAccount is
+  gone, and removes them in an order that never leaves a binding pointing at
+  a deleted role. Worth doing — recreating a ServiceAccount with the same
+  name would silently inherit every permission the old one had.
+- **Expiring tokens**: issue the kubeconfig from the TokenRequest API with a
+  lifetime from one hour to a year, instead of the long-lived Secret token
+  that never expires and that nothing revokes if the file leaks.
+
+### Namespace Access
+
+The inverse view: pick a namespace and see everything that grants access to
+it, including bindings this plugin never created. Lists the namespace's
+RoleBindings plus every ClusterRoleBinding — a ClusterRoleBinding reaches
+into every namespace at once, which is the grant people forget when auditing.
+Each row says whether the role is read-only, can write, or is a full-access
+grant.
 
 ### Resource Builder
 
