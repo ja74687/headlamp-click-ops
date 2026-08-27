@@ -89,7 +89,7 @@ export function isNotFound(err: unknown): boolean {
  * release. Top-level keys the caller *does* set (data, rules, subjects...) still replace
  * wholesale, so removing a key from a ConfigMap still removes it.
  */
-function mergeOntoExisting(current: any, desired: AnyResource): any {
+export function mergeOntoExisting(current: any, desired: AnyResource): any {
   const currentMeta = current?.metadata ?? {};
   const desiredMeta: any = desired.metadata ?? {};
   return {

@@ -114,7 +114,12 @@ exist there — swallowed as a 404 — leaving the real binding, and its access,
 `roleRef` is a ClusterRole, so an account built from namespaced bindings alone cannot list
 namespaces, read nodes or read metrics — Headlamp is unusable for it. `buildUiClusterRead`
 emits an optional `<sa>-cluster-read` ClusterRole + ClusterRoleBinding for that, at the level
-chosen by `BuildInput.uiAccess` (`none` / `namespaces` / `metrics` / `kubelet`, cumulative).
+chosen by `BuildInput.uiAccess` (`none` / `namespaces` / `metrics` / `workloads` / `kubelet`,
+cumulative — `LEVEL_ORDER` plus `atLeast()` drive both rule building and detection, so a new
+level means one array entry and one branch, not a rewrite). `levelFromUiAccessRules` reads the
+level back off a live ClusterRole and must test most-specific first; note it matches on
+(group, resource) pairs, because `metrics.k8s.io` also has a `pods` resource and reading pod
+metrics is a different permission from listing pods.
 Those two objects are tagged `access-builder/purpose: ui-cluster-read` and deliberately carry
 **no** `access-builder/account` label; discovery filters them out before matching, because
 they name the ServiceAccount as a subject and would otherwise be mistaken for the account's
@@ -128,6 +133,14 @@ multi-namespace idiom. Note the consequence: permissions on cluster-scoped resou
 into that ClusterRole (e.g. `namespaces`, `nodes`) do **not** take effect, because a
 RoleBinding only grants inside its own namespace. Anything the user needs cluster-wide requires
 a separate ClusterRoleBinding.
+
+`src/lib/accessCheck.ts` verifies an account against the API server with SubjectAccessReview
+(`POST /apis/authorization.k8s.io/v1/subjectaccessreviews`, `spec.user =
+system:serviceaccount:<ns>:<name>`) rather than re-reading the manifests. `allowed: null` means
+"could not determine" and is deliberately distinct from `false`; when *every* check comes back
+null it is the operator's own permission to create reviews that is missing, not the account's.
+Checks marked `optional` map to panels that are allowed to stay empty — only a non-optional
+denial means the account cannot use Headlamp.
 
 Long-lived tokens: a `kubernetes.io/service-account-token` Secret is created and `waitForToken`
 polls it (750 ms, 20 s cap) until the controller fills in `token` and `ca.crt`, which then feed

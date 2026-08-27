@@ -17,6 +17,7 @@ import {
   Typography,
 } from '@mui/material';
 import React, { useCallback, useEffect, useState } from 'react';
+import AccessCheckDialog from './AccessCheckDialog';
 import { listManagedAccounts, ManagedAccount } from './lib/discovery';
 import { UiAccessLevel } from './lib/rbac';
 
@@ -38,6 +39,11 @@ const UI_ACCESS_LABELS: Record<
     label: '+ metrics',
     hint: 'Namespaces plus nodes and metrics.k8s.io — the cluster overview works.',
     color: 'success',
+  },
+  workloads: {
+    label: '+ pods',
+    hint: 'Also reads pods and PVCs cluster-wide, so names from every namespace are visible.',
+    color: 'warning',
   },
   kubelet: {
     label: '+ kubelet',
@@ -62,6 +68,7 @@ export default function ManagedAccountsList({
   const [accounts, setAccounts] = useState<ManagedAccount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
+  const [checking, setChecking] = useState<ManagedAccount | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -185,6 +192,17 @@ export default function ManagedAccountsList({
                 </TableCell>
                 <TableCell align="right">
                   <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                    <Tooltip title="Check what this account is actually allowed to do">
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={() => setChecking(a)}
+                          aria-label="Check access"
+                        >
+                          <Icon icon="mdi:shield-search" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
                     <Tooltip title="Download kubeconfig">
                       <span>
                         <IconButton
@@ -238,6 +256,8 @@ export default function ManagedAccountsList({
           </TableBody>
         </Table>
       )}
+
+      <AccessCheckDialog account={checking} onClose={() => setChecking(null)} />
     </Paper>
   );
 }

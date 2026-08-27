@@ -79,12 +79,37 @@ describe('uiAccessRules', () => {
     expect(flat).not.toContain('nodes/proxy');
   });
 
+  it('adds core pods and PVCs only from the workloads level up', () => {
+    // metrics.k8s.io also has a "pods" resource, so the group has to be part of the check —
+    // reading pod metrics is not the same permission as listing pods.
+    const coreResources = (level: UiAccessLevel) =>
+      uiAccessRules(level)
+        .filter(r => r.apiGroups.includes(''))
+        .flatMap(r => r.resources);
+
+    expect(coreResources('metrics')).not.toContain('pods');
+    expect(coreResources('workloads')).toContain('pods');
+    expect(coreResources('workloads')).toContain('persistentvolumeclaims');
+    expect(coreResources('workloads')).not.toContain('nodes/proxy');
+  });
+
   it('adds nodes/proxy only at the kubelet level', () => {
     expect(uiAccessRules('kubelet').flatMap(r => r.resources)).toContain('nodes/proxy');
   });
 
+  it('is cumulative — every level is a superset of the one below it', () => {
+    const levels: UiAccessLevel[] = ['namespaces', 'metrics', 'workloads', 'kubelet'];
+    for (let i = 1; i < levels.length; i++) {
+      const lower = new Set(uiAccessRules(levels[i - 1]).flatMap(r => r.resources));
+      const higher = new Set(uiAccessRules(levels[i]).flatMap(r => r.resources));
+      for (const resource of lower) {
+        expect(higher).toContain(resource);
+      }
+    }
+  });
+
   it('round-trips through levelFromUiAccessRules', () => {
-    const levels: UiAccessLevel[] = ['none', 'namespaces', 'metrics', 'kubelet'];
+    const levels: UiAccessLevel[] = ['none', 'namespaces', 'metrics', 'workloads', 'kubelet'];
     for (const level of levels) {
       expect(levelFromUiAccessRules(uiAccessRules(level))).toBe(level);
     }

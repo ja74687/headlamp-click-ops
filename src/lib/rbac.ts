@@ -25,7 +25,14 @@ export type Rule = {
  * therefore needs a real ClusterRoleBinding, or the account cannot use the Headlamp UI
  * at all ("namespaces is forbidden ... at the cluster scope"). Levels are cumulative.
  */
-export type UiAccessLevel = 'none' | 'namespaces' | 'metrics' | 'kubelet';
+export type UiAccessLevel = 'none' | 'namespaces' | 'metrics' | 'workloads' | 'kubelet';
+
+/** Cumulative, least to most exposed. Order drives both rule building and detection. */
+const LEVEL_ORDER: UiAccessLevel[] = ['none', 'namespaces', 'metrics', 'workloads', 'kubelet'];
+
+function atLeast(level: UiAccessLevel, min: UiAccessLevel): boolean {
+  return LEVEL_ORDER.indexOf(level) >= LEVEL_ORDER.indexOf(min);
+}
 
 export const UI_ACCESS_LEVELS: {
   value: UiAccessLevel;
@@ -50,6 +57,12 @@ export const UI_ACCESS_LEVELS: {
     label: '+ nodes and metrics',
     description:
       'Adds nodes and metrics.k8s.io so the cluster CPU/memory overview works. Pod metrics are cluster-wide, so pod names from other namespaces become visible.',
+  },
+  {
+    value: 'workloads',
+    label: '+ pods and PVCs',
+    description:
+      'Adds cluster-wide read on pods and persistentvolumeclaims, which is what the Overview pod count and the PVC panel need. Pod and PVC names from every namespace become visible, so this undoes part of the isolation the namespace bindings give you.',
   },
   {
     value: 'kubelet',
@@ -192,7 +205,7 @@ export function uiAccessRules(level: UiAccessLevel): Rule[] {
   const rules: Rule[] = [
     { apiGroups: [''], resources: ['namespaces'], verbs: ['get', 'list', 'watch'] },
   ];
-  if (level === 'metrics' || level === 'kubelet') {
+  if (atLeast(level, 'metrics')) {
     rules.push({ apiGroups: [''], resources: ['nodes'], verbs: ['get', 'list', 'watch'] });
     rules.push({
       apiGroups: ['metrics.k8s.io'],
@@ -200,7 +213,14 @@ export function uiAccessRules(level: UiAccessLevel): Rule[] {
       verbs: ['get', 'list'],
     });
   }
-  if (level === 'kubelet') {
+  if (atLeast(level, 'workloads')) {
+    rules.push({
+      apiGroups: [''],
+      resources: ['pods', 'persistentvolumeclaims'],
+      verbs: ['get', 'list', 'watch'],
+    });
+  }
+  if (atLeast(level, 'kubelet')) {
     rules.push({ apiGroups: [''], resources: ['nodes/proxy'], verbs: ['get'] });
   }
   return rules;
@@ -210,7 +230,9 @@ export function levelFromUiAccessRules(rules: Rule[]): UiAccessLevel {
   if (!rules || rules.length === 0) return 'none';
   const has = (group: string, resource: string) =>
     rules.some(r => r.apiGroups.includes(group) && r.resources.includes(resource));
+  // Most specific first: the levels are cumulative, so a higher one also matches lower rules.
   if (has('', 'nodes/proxy')) return 'kubelet';
+  if (has('', 'pods')) return 'workloads';
   if (has('metrics.k8s.io', 'nodes') || has('', 'nodes')) return 'metrics';
   if (has('', 'namespaces')) return 'namespaces';
   return 'none';

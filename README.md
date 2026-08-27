@@ -42,10 +42,14 @@ The plugin adds **four pages** to Headlamp's sidebar:
   *namespaces is forbidden ... at the cluster scope* and leave the cluster
   overview empty. Pick a level and the plugin creates a separate
   `<name>-cluster-read` ClusterRole + ClusterRoleBinding next to the account:
-  namespace list only (the recommended minimum), plus nodes and metrics, or
-  plus `nodes/proxy` for disk stats. The last one is flagged as privilege
-  escalation, because kubelet access leaks logs and metadata of pods in
-  namespaces the account was never granted.
+  namespace list only (the recommended minimum), plus nodes and metrics, plus
+  cluster-wide pods and PVCs, or plus `nodes/proxy` for disk stats. The last
+  one is flagged as privilege escalation, because kubelet access leaks logs
+  and metadata of pods in namespaces the account was never granted.
+- **Access check**: one click runs a set of SubjectAccessReviews against the
+  API server and shows, per capability, what the account may actually do —
+  so you find out that Headlamp will greet it with *namespaces is forbidden*
+  here, rather than from the person you handed the kubeconfig to.
 - Auto-detects the API server URL from `kube-public/cluster-info` or the
   `kubernetes` Endpoints.
 - Downloads a ready-to-use `.kubeconfig` (CA + token already embedded) — works
