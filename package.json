@@ -1,7 +1,7 @@
 {
   "name": "headlamp-click-ops",
-  "version": "0.4.0",
-  "description": "Point-and-click cluster ops for Headlamp — build ServiceAccounts and RBAC with the cluster-scoped read Headlamp actually needs, issue expiring or long-lived kubeconfigs, audit who can reach a namespace, manage ConfigMaps and Secrets without writing YAML, watch live cluster resource usage, and customize Headlamp's sidebar.",
+  "version": "0.5.0",
+  "description": "Point-and-click cluster ops for Headlamp — build ServiceAccounts and RBAC with the cluster-scoped read Headlamp actually needs, issue expiring or long-lived kubeconfigs, audit who can reach a namespace, manage ConfigMaps and Secrets without writing YAML, protect Ingresses behind Traefik with an IP allowlist, a password and HTTPS (including ingress-nginx compatibility mode), watch live cluster resource usage, and customize Headlamp's sidebar.",
   "author": "ja74687",
   "license": "MIT",
   "repository": {
@@ -43,7 +43,13 @@
     "sidebar",
     "audit",
     "tokenrequest",
-    "subjectaccessreview"
+    "subjectaccessreview",
+    "traefik",
+    "ingress",
+    "ingress-nginx",
+    "middleware",
+    "basic-auth",
+    "ip-allowlist"
   ],
   "prettier": "@headlamp-k8s/eslint-config/prettier-config",
   "eslintConfig": {

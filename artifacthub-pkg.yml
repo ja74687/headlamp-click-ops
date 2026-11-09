@@ -1,8 +1,8 @@
-version: 0.4.0
+version: 0.5.0
 name: headlamp-click-ops
 displayName: Click-Ops for Headlamp
 createdAt: "2026-05-06T00:00:00Z"
-description: Point-and-click cluster ops for Headlamp — build ServiceAccounts and RBAC with the cluster-scoped read Headlamp actually needs, issue expiring or long-lived kubeconfigs, audit who can reach a namespace, manage ConfigMaps and Secrets without writing YAML, watch live cluster resource usage, and customize Headlamp's sidebar.
+description: Point-and-click cluster ops for Headlamp — build ServiceAccounts and RBAC with the cluster-scoped read Headlamp actually needs, issue expiring or long-lived kubeconfigs, audit who can reach a namespace, manage ConfigMaps and Secrets without writing YAML, protect Ingresses behind Traefik with an IP allowlist, a password and HTTPS (including ingress-nginx compatibility mode), watch live cluster resource usage, and customize Headlamp's sidebar.
 logoURL: https://raw.githubusercontent.com/ja74687/headlamp-click-ops/main/assets/logo/icon.svg
 license: MIT
 homeURL: https://github.com/ja74687/headlamp-click-ops
@@ -27,6 +27,11 @@ keywords:
   - click-ops
   - audit
   - tokenrequest
+  - traefik
+  - ingress
+  - ingress-nginx
+  - basic-auth
+  - ip-allowlist
 annotations:
   headlamp/plugin/archive-url: "https://github.com/ja74687/headlamp-click-ops/releases/download/v0.4.0/headlamp-click-ops-0.4.0.tar.gz"
   headlamp/plugin/archive-checksum: "sha256:cd6dc2732ddf44cc1302477a3210c425dd345c8ee29c8215e31491320d8e3c7f"
