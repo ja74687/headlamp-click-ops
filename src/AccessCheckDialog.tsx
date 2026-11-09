@@ -81,6 +81,7 @@ export default function AccessCheckDialog({
       name: account.name,
       boundNamespaces: account.bindingNamespaces,
       scope: account.scope,
+      rules: account.rules,
     })
       .then(r => {
         if (!cancelled) setReport(r);
@@ -128,8 +129,18 @@ export default function AccessCheckDialog({
             {blocked.length > 0 ? (
               <Alert severity="error" sx={{ mb: 2 }}>
                 <AlertTitle>This account cannot use Headlamp.</AlertTitle>
-                Raise <strong>Headlamp UI access</strong> in the form below and save — the
-                red rows say what is missing.
+                {blocked.some(r => r.id === 'namespaces') ? (
+                  <>
+                    Raise <strong>Headlamp UI access</strong> in the form below and save — the
+                    red rows say what is missing.
+                  </>
+                ) : (
+                  <>
+                    Its own rules do not take effect in the namespaces marked red. Check the
+                    bindings and the <strong>Permissions</strong> rules — Headlamp UI access
+                    does not change this.
+                  </>
+                )}
               </Alert>
             ) : denied.length > 0 ? (
               <Alert severity="info" sx={{ mb: 2 }}>

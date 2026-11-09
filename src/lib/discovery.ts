@@ -1,9 +1,9 @@
 import { request } from '@kinvolk/headlamp-plugin/lib/ApiProxy';
-import { Verb } from './catalog';
 import {
   levelFromUiAccessRules,
   MANAGED_BY_LABEL,
   MANAGED_BY_VALUE,
+  normaliseRules,
   PURPOSE_LABEL,
   PURPOSE_UI_CLUSTER_READ,
   Rule,
@@ -48,15 +48,17 @@ export type ManagedAccount = {
   rules: Rule[];
 };
 
-type AnyObject = { metadata: any; [k: string]: any };
+export type AnyObject = { metadata: any; [k: string]: any };
 
-async function listManaged(url: string): Promise<AnyObject[]> {
+/** Objects carrying this plugin's managed-by label. A failed list comes back as `error`. */
+export async function listManagedObjects(
+  url: string,
+): Promise<{ items: AnyObject[]; error: string | null }> {
   try {
     const res: any = await request(`${url}?labelSelector=${encodeURIComponent(LABEL_SELECTOR)}`);
-    return (res?.items as AnyObject[]) ?? [];
+    return { items: (res?.items as AnyObject[]) ?? [], error: null };
   } catch (err) {
-    warn('listManaged failed', url, err);
-    return [];
+    return { items: [], error: `${url}: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -82,12 +84,37 @@ function isUiClusterRead(obj: AnyObject): boolean {
   return obj?.metadata?.labels?.[PURPOSE_LABEL] === PURPOSE_UI_CLUSTER_READ;
 }
 
+/**
+ * Whether a (Cluster)RoleBinding is this account's: by subject first, then by the
+ * `access-builder/account` label, then by the `<sa>-binding[-<ns>]` name.
+ */
+export function bindingBelongsTo(obj: AnyObject, saName: string, saNamespace: string): boolean {
+  if (Array.isArray(obj.subjects)) {
+    const sameName = obj.subjects.filter(
+      (s: any) => s?.kind === 'ServiceAccount' && s.name === saName,
+    );
+    if (sameName.some((s: any) => s.namespace === saNamespace)) return true;
+    // The label and name fallbacks below carry no namespace. A binding whose subject is a
+    // same-named account in another namespace belongs to that account; claiming it here
+    // let an edit of one account prune the other's bindings.
+    if (sameName.length > 0) return false;
+  }
+  const labels = obj.metadata?.labels ?? {};
+  if (labels['access-builder/account'] === saName) return true;
+  const prefix = `${saName}-binding`;
+  const n: string = obj.metadata?.name ?? '';
+  return n === prefix || n.startsWith(`${prefix}-`);
+}
+
 export async function listManagedAccounts(): Promise<ManagedAccount[]> {
-  const [serviceAccounts, roleBindingsRaw, clusterRoleBindingsRaw] = await Promise.all([
-    listManaged('/api/v1/serviceaccounts'),
+  const [saList, roleBindingsRaw, clusterRoleBindingsRaw] = await Promise.all([
+    listManagedObjects('/api/v1/serviceaccounts'),
     listAll('/apis/rbac.authorization.k8s.io/v1/rolebindings'),
     listAll('/apis/rbac.authorization.k8s.io/v1/clusterrolebindings'),
   ]);
+  // An empty list here would read as "no accounts yet", which is not what happened.
+  if (saList.error) throw new Error(`Could not list ServiceAccounts — ${saList.error}`);
+  const serviceAccounts = saList.items;
 
   // The cluster-read bundle names the SA as a subject, so it would otherwise be picked up
   // as the account's own binding and flip its scope to Cluster.
@@ -102,23 +129,7 @@ export async function listManagedAccounts(): Promise<ManagedAccount[]> {
     const bindingNamePrefix = `${saName}-binding`;
     const clusterReadName = `${saName}-cluster-read`;
 
-    const matchesAccount = (obj: AnyObject): boolean => {
-      if (Array.isArray(obj.subjects)) {
-        if (
-          obj.subjects.some(
-            (s: any) =>
-              s?.kind === 'ServiceAccount' && s.name === saName && s.namespace === saNamespace,
-          )
-        ) {
-          return true;
-        }
-      }
-      const labels = obj.metadata?.labels ?? {};
-      if (labels['access-builder/account'] === saName) return true;
-      const n: string = obj.metadata?.name ?? '';
-      if (n === bindingNamePrefix || n.startsWith(`${bindingNamePrefix}-`)) return true;
-      return false;
-    };
+    const matchesAccount = (obj: AnyObject) => bindingBelongsTo(obj, saName, saNamespace);
 
     let matchedRBs = roleBindings.filter(matchesAccount);
     let matchedCRB = clusterRoleBindings.find(matchesAccount);
@@ -127,12 +138,14 @@ export async function listManagedAccounts(): Promise<ManagedAccount[]> {
       const directRB = await getOne(
         `/apis/rbac.authorization.k8s.io/v1/namespaces/${saNamespace}/rolebindings/${bindingNamePrefix}`,
       );
-      if (directRB) matchedRBs = [directRB];
-      if (!directRB) {
+      // Same ownership test as the list: by name alone these could be a same-named
+      // account's in another namespace.
+      if (directRB && matchesAccount(directRB)) matchedRBs = [directRB];
+      if (matchedRBs.length === 0) {
         const directCRB = await getOne(
           `/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${bindingNamePrefix}`,
         );
-        if (directCRB) matchedCRB = directCRB;
+        if (directCRB && matchesAccount(directCRB)) matchedCRB = directCRB;
       }
     }
 
@@ -210,12 +223,4 @@ export async function listManagedAccounts(): Promise<ManagedAccount[]> {
     })),
   });
   return sorted;
-}
-
-function normaliseRules(raw: any[]): Rule[] {
-  return (raw ?? []).map(r => ({
-    apiGroups: Array.isArray(r.apiGroups) ? r.apiGroups : [''],
-    resources: Array.isArray(r.resources) ? r.resources : [],
-    verbs: Array.isArray(r.verbs) ? (r.verbs as Verb[]) : [],
-  }));
 }

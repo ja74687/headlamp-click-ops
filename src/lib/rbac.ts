@@ -88,6 +88,11 @@ export type BuildInput = {
 
 const managedLabels = { [MANAGED_BY_LABEL]: MANAGED_BY_VALUE };
 
+/** The labels every object of one account carries — and what proves an object is its own. */
+export function accountLabels(serviceAccountName: string): Record<string, string> {
+  return { ...managedLabels, 'access-builder/account': serviceAccountName };
+}
+
 export function roleKind(input: BuildInput): 'Role' | 'ClusterRole' {
   if (input.scope === 'Cluster') return 'ClusterRole';
   if (input.namespaces.length > 1) return 'ClusterRole';
@@ -106,7 +111,7 @@ export function buildServiceAccount(input: BuildInput) {
     metadata: {
       name: input.serviceAccountName,
       namespace: input.tokenNamespace,
-      labels: { ...managedLabels, 'access-builder/account': input.serviceAccountName },
+      labels: accountLabels(input.serviceAccountName),
     },
   };
 }
@@ -121,7 +126,7 @@ export function buildTokenSecret(input: BuildInput) {
       annotations: {
         'kubernetes.io/service-account.name': input.serviceAccountName,
       },
-      labels: { ...managedLabels, 'access-builder/account': input.serviceAccountName },
+      labels: accountLabels(input.serviceAccountName),
     },
     type: 'kubernetes.io/service-account-token',
   };
@@ -135,7 +140,7 @@ export function buildRole(input: BuildInput) {
       kind: 'ClusterRole',
       metadata: {
         name: input.roleName,
-        labels: { ...managedLabels, 'access-builder/account': input.serviceAccountName },
+        labels: accountLabels(input.serviceAccountName),
       },
       rules: input.rules,
     };
@@ -146,7 +151,7 @@ export function buildRole(input: BuildInput) {
     metadata: {
       name: input.roleName,
       namespace: input.namespaces[0],
-      labels: { ...managedLabels, 'access-builder/account': input.serviceAccountName },
+      labels: accountLabels(input.serviceAccountName),
     },
     rules: input.rules,
   };
@@ -172,10 +177,7 @@ export function buildBindings(input: BuildInput) {
         kind: 'ClusterRoleBinding',
         metadata: {
           name: bindingName(input.bindingNamePrefix),
-          labels: {
-            ...managedLabels,
-            'access-builder/account': input.serviceAccountName,
-          },
+          labels: accountLabels(input.serviceAccountName),
         },
         subjects: [subject],
         roleRef,
@@ -190,8 +192,7 @@ export function buildBindings(input: BuildInput) {
       name: bindingName(input.bindingNamePrefix, ns),
       namespace: ns,
       labels: {
-        ...managedLabels,
-        'access-builder/account': input.serviceAccountName,
+        ...accountLabels(input.serviceAccountName),
         'access-builder/binding-namespace': ns,
       },
     },
@@ -224,6 +225,15 @@ export function uiAccessRules(level: UiAccessLevel): Rule[] {
     rules.push({ apiGroups: [''], resources: ['nodes/proxy'], verbs: ['get'] });
   }
   return rules;
+}
+
+/** Rules as read back from a live Role or ClusterRole, with missing lists filled in. */
+export function normaliseRules(raw: any[]): Rule[] {
+  return (raw ?? []).map(r => ({
+    apiGroups: Array.isArray(r.apiGroups) ? r.apiGroups : [''],
+    resources: Array.isArray(r.resources) ? r.resources : [],
+    verbs: Array.isArray(r.verbs) ? (r.verbs as Verb[]) : [],
+  }));
 }
 
 export function levelFromUiAccessRules(rules: Rule[]): UiAccessLevel {

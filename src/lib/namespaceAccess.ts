@@ -1,5 +1,5 @@
 import { request } from '@kinvolk/headlamp-plugin/lib/ApiProxy';
-import { MANAGED_BY_LABEL, MANAGED_BY_VALUE, PURPOSE_LABEL, Rule } from './rbac';
+import { MANAGED_BY_LABEL, MANAGED_BY_VALUE, normaliseRules, PURPOSE_LABEL, Rule } from './rbac';
 
 /**
  * The inverse of Access Builder: pick a namespace, see everything that grants access to it —
@@ -44,14 +44,6 @@ type AnyObject = { metadata: any; [k: string]: any };
 async function listOrThrow(url: string): Promise<AnyObject[]> {
   const res: any = await request(url);
   return (res?.items as AnyObject[]) ?? [];
-}
-
-function normaliseRules(raw: any[]): Rule[] {
-  return (raw ?? []).map(r => ({
-    apiGroups: Array.isArray(r.apiGroups) ? r.apiGroups : [''],
-    resources: Array.isArray(r.resources) ? r.resources : [],
-    verbs: Array.isArray(r.verbs) ? r.verbs : [],
-  }));
 }
 
 function normaliseSubjects(raw: any[]): Subject[] {

@@ -23,7 +23,7 @@
 
 ## What it does
 
-The plugin adds **five pages** to Headlamp's sidebar:
+The plugin adds **six pages** to Headlamp's sidebar:
 
 ### Access Builder
 
@@ -93,6 +93,76 @@ grant.
 - "Hide system" toggle hides noise like `kube-root-ca.crt` and
   service-account-token Secrets.
 
+### Traefik
+
+For clusters running Traefik v3 (`traefik.io/v1alpha1` CRDs — k3s ships it
+by default). Traefik v2 (`traefik.containo.us`) is detected and reported, not
+supported.
+
+**It checks what your Traefik actually reads before offering anything.**
+Middlewares only count when Traefik's `kubernetesCRD` provider is on, the
+`router.middlewares` annotation only when its own Ingress provider is, and a
+Traefik that replaced ingress-nginx often runs just the ingress-nginx
+compatibility provider, which ignores both. The page reads the providers and
+the version from the Traefik DaemonSet / Deployment, shows them at the top,
+and never lets you attach something nothing enforces — an admin panel that
+looks protected but isn't is the failure it is built to prevent. When it
+cannot tell (no permission to read workloads, several Traefiks, a config
+file), it says "unknown" and asks you to confirm instead of guessing.
+
+**ingress-nginx compatibility mode.** For Ingresses served that way, the
+Routes tab shows the protection that really applies, read from the
+`nginx.ingress.kubernetes.io/*` annotations — IP allowlist, password, HTTPS
+redirect — and marks a missing allowlist or password in red. One click opens
+an editor for them:
+
+- **IP allowlist** (`whitelist-source-range` / `allowlist-source-range`),
+  validated, with a warning when a change could lock you out.
+- **Password**: a username and password become an `$apr1$` htpasswd line in a
+  Secret `<ingress>-basic-auth` (the format `openssl passwd -apr1` makes),
+  wired up with `auth-type`, `auth-secret` and `auth-realm`. A password set up
+  by hand is shown and left alone; switching the password off removes only the
+  Secret the plugin created, and not while another Ingress still uses it.
+- **Force HTTPS** (`force-ssl-redirect`).
+- Removing the allowlist or the password, or adding `0.0.0.0/0`, needs an
+  explicit confirmation. Writes carry the Ingress's `resourceVersion`, so a
+  change someone made meanwhile is reported, not overwritten.
+- Version-aware: the allowlist annotations only exist from Traefik 3.7, so on
+  older versions a list is shown as ignored and cannot be edited.
+
+Reading the providers needs cluster-wide `list` on `daemonsets`,
+`deployments` and `statefulsets`; without it the page falls back to
+"unknown".
+
+- **Middlewares from a form**, no YAML: pick a card and fill in the blanks.
+  - **IP allowlist** — addresses and CIDR networks, one-click private
+    ranges and localhost, an option for Traefik behind a load balancer
+    (`ipStrategy.depth`), custom reject status.
+  - **Login (basic auth)** — username and password; the plugin creates the
+    `kubernetes.io/basic-auth` Secret the middleware reads. One middleware
+    holds one user, and the password sits in the Secret as base64, so
+    whoever can read Secrets in that namespace can read it.
+  - **Redirect to HTTPS**, **security headers** (HSTS, frame deny,
+    nosniff, referrer policy, custom headers), **rate limit**, **strip
+    path prefix**.
+- Editing an existing middleware keeps every field the form does not show,
+  and only middlewares the form fully understands can be edited — chains,
+  forwardAuth and the like are listed read-only.
+- **Routes** tab: tick middlewares on an Ingress (written to the
+  `traefik.ingress.kubernetes.io/router.middlewares` annotation) or on each
+  route of an IngressRoute. References the dialog does not manage —
+  `@file` providers, other namespaces — stay where they were. Each Ingress
+  shows which Traefik provider serves it (native, ingress-nginx
+  compatibility, none, or unknown), and the middleware editor is only
+  offered where the native provider and the CRD provider will read it.
+- **Access logs per route**: default / on / off, through the
+  `router.observability.accesslogs` annotation or `routes[].observability`.
+  This only has an effect when access logging is enabled in Traefik's static
+  configuration (Helm values); if the installed CRDs are too old to know the
+  field, the page says so instead of reporting success.
+- Middleware lists show what uses each one, and deleting asks with that list
+  in front of you.
+
 ### Cluster Monitor
 
 - Three summary cards: total cluster CPU, memory and disk (root fs) — fed by
@@ -158,9 +228,9 @@ grant.
      package.json
    ```
 3. **Fully quit Headlamp** (check the system tray, not just the window) and
-   start it again. Four new entries — *Access Builder*, *Resource Builder*,
-   *Cluster Monitor* and *Sidebar Settings* — show up in the sidebar once you
-   open a cluster.
+   start it again. Six new entries — *Access Builder*, *Namespace Access*,
+   *Resource Builder*, *Traefik*, *Cluster Monitor* and *Sidebar Settings* —
+   show up in the sidebar once you open a cluster.
 
 ### Option B — build from source
 

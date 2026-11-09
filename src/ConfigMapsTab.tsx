@@ -3,39 +3,34 @@ import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import {
   Alert,
   Autocomplete,
-  Box,
   Button,
-  Chip,
-  CircularProgress,
   Divider,
-  FormControlLabel,
-  IconButton,
   LinearProgress,
   Paper,
   Stack,
-  Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField,
-  Tooltip,
   Typography,
 } from '@mui/material';
 import yaml from 'js-yaml';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import KeyValueEditor, { KVEntry } from './KeyValueEditor';
+import KvResourceTable from './KvResourceTable';
 import {
-  applyConfigMap,
   ConfigMapResource,
   deleteConfigMap,
+  filterKvItems,
   getConfigMap,
+  isDnsSubdomain,
   isSystemConfigMap,
   listConfigMaps,
+  saveConfigMap,
 } from './lib/kvResources';
+import YamlPreview from './YamlPreview';
 
-type Mode = { kind: 'create' } | { kind: 'edit'; namespace: string; name: string };
+type Mode =
+  | { kind: 'create' }
+  // `live` is the object as it was when editing started; saving checks nobody changed it since.
+  | { kind: 'edit'; namespace: string; name: string; live: ConfigMapResource };
 
 type Props = { activeNamespaces?: string[] };
 
@@ -89,24 +84,17 @@ export default function ConfigMapsTab({ activeNamespaces = [] }: Props) {
     load();
   }, [load]);
 
-  const filtered = useMemo(() => {
-    if (!items) return null;
-    const nsSet = new Set(activeNamespaces);
-    return items
-      .filter(cm => (hideSystem ? !isSystemConfigMap(cm) : true))
-      .filter(cm => (nsSet.size > 0 ? nsSet.has(cm.metadata.namespace) : true))
-      .filter(cm =>
-        filter
-          ? cm.metadata.name.toLowerCase().includes(filter.toLowerCase()) ||
-            cm.metadata.namespace.toLowerCase().includes(filter.toLowerCase())
-          : true,
-      )
-      .sort((a, b) =>
-        `${a.metadata.namespace}/${a.metadata.name}`.localeCompare(
-          `${b.metadata.namespace}/${b.metadata.name}`,
-        ),
-      );
-  }, [items, hideSystem, filter, activeNamespaces]);
+  const filtered = useMemo(
+    () =>
+      items &&
+      filterKvItems(items, {
+        hideSystem,
+        isSystem: isSystemConfigMap,
+        namespaces: activeNamespaces,
+        text: filter,
+      }),
+    [items, hideSystem, filter, activeNamespaces],
+  );
 
   function resetForm() {
     setMode({ kind: 'create' });
@@ -119,7 +107,12 @@ export default function ConfigMapsTab({ activeNamespaces = [] }: Props) {
 
   async function startEdit(cm: ConfigMapResource) {
     const fresh = (await getConfigMap(cm.metadata.namespace, cm.metadata.name)) ?? cm;
-    setMode({ kind: 'edit', namespace: fresh.metadata.namespace, name: fresh.metadata.name });
+    setMode({
+      kind: 'edit',
+      namespace: fresh.metadata.namespace,
+      name: fresh.metadata.name,
+      live: fresh,
+    });
     setNamespace(fresh.metadata.namespace);
     setName(fresh.metadata.name);
     setEntries(
@@ -153,9 +146,10 @@ export default function ConfigMapsTab({ activeNamespaces = [] }: Props) {
     setError(null);
     setSuccess(null);
     try {
-      await applyConfigMap(desired);
-      setSuccess(`ConfigMap ${namespace}/${name} saved.`);
+      await saveConfigMap(desired, mode.kind === 'edit' ? mode.live : null);
+      // resetForm clears `success`, so the message has to come after it.
       resetForm();
+      setSuccess(`ConfigMap ${namespace}/${name} saved.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -187,89 +181,19 @@ export default function ConfigMapsTab({ activeNamespaces = [] }: Props) {
 
   return (
     <Stack spacing={3}>
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-          <Typography variant="h6">ConfigMaps</Typography>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <FormControlLabel
-              control={<Switch checked={hideSystem} onChange={e => setHideSystem(e.target.checked)} />}
-              label={<Typography variant="body2">Hide system</Typography>}
-            />
-            <Tooltip title="Refresh">
-              <IconButton onClick={load} size="small" aria-label="Refresh">
-                <Icon icon="mdi:refresh" />
-              </IconButton>
-            </Tooltip>
-          </Stack>
-        </Stack>
-
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ mb: 1 }}>
-          <TextField
-            size="small"
-            label="Filter name"
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
-            sx={{ flex: 1 }}
-          />
-        </Stack>
-
-        {listError && (
-          <Alert severity="error" sx={{ mb: 1 }} onClose={() => setListError(null)}>
-            {listError}
-          </Alert>
-        )}
-        {filtered === null ? (
-          <Stack alignItems="center" sx={{ py: 3 }}>
-            <CircularProgress size={24} />
-          </Stack>
-        ) : filtered.length === 0 ? (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-            No ConfigMaps match the filters.
-          </Typography>
-        ) : (
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Namespace</TableCell>
-                <TableCell>Keys</TableCell>
-                <TableCell align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filtered.map(cm => (
-                <TableRow hover key={`${cm.metadata.namespace}/${cm.metadata.name}`}>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                      {cm.metadata.name}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip size="small" label={cm.metadata.namespace} />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="caption" color="text.secondary">
-                      {Object.keys(cm.data ?? {}).length} keys
-                    </Typography>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Tooltip title="Edit">
-                      <IconButton size="small" onClick={() => startEdit(cm)}>
-                        <Icon icon="mdi:pencil-outline" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton size="small" onClick={() => remove(cm)} color="error">
-                        <Icon icon="mdi:delete-outline" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Paper>
+      <KvResourceTable
+        title="ConfigMaps"
+        items={filtered}
+        listError={listError}
+        onClearError={() => setListError(null)}
+        hideSystem={hideSystem}
+        onHideSystemChange={setHideSystem}
+        filter={filter}
+        onFilterChange={setFilter}
+        onRefresh={load}
+        onEdit={startEdit}
+        onDelete={remove}
+      />
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
@@ -312,34 +236,7 @@ export default function ConfigMapsTab({ activeNamespaces = [] }: Props) {
         />
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between">
-          <Typography variant="h6">YAML preview</Typography>
-          <Button
-            size="small"
-            startIcon={<Icon icon="mdi:content-copy" />}
-            onClick={() => navigator.clipboard.writeText(previewYaml).catch(() => {})}
-          >
-            Copy
-          </Button>
-        </Stack>
-        <Box
-          component="pre"
-          sx={{
-            m: 0,
-            mt: 1,
-            p: 2,
-            backgroundColor: 'action.hover',
-            fontFamily: 'monospace',
-            fontSize: 13,
-            overflow: 'auto',
-            maxHeight: 320,
-            borderRadius: 1,
-          }}
-        >
-          {previewYaml}
-        </Box>
-      </Paper>
+      <YamlPreview yaml={previewYaml} />
 
       {errors.length > 0 && (
         <Alert severity="info">
@@ -392,8 +289,10 @@ function validate(cm: ConfigMapResource): string[] {
   const errs: string[] = [];
   if (!cm.metadata.namespace) errs.push('Namespace is required.');
   if (!cm.metadata.name) errs.push('Name is required.');
-  if (!/^[a-z0-9][-a-z0-9.]*$/.test(cm.metadata.name ?? '')) {
-    errs.push('Name must be a valid DNS subdomain (lowercase letters, digits, ".", "-").');
+  if (cm.metadata.name && !isDnsSubdomain(cm.metadata.name)) {
+    errs.push(
+      'Name must be a valid DNS subdomain (lowercase letters, digits, "." and "-", starting and ending with a letter or digit).',
+    );
   }
   const keys = Object.keys(cm.data ?? {});
   if (keys.length === 0) errs.push('At least one data entry is required.');

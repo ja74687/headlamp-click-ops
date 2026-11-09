@@ -20,7 +20,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   describeSubject,
   fetchNamespaceAccess,
@@ -110,13 +110,18 @@ export default function NamespaceAccessPage() {
     }
   }, [namespaceOptions, namespace]);
 
+  // Switching namespaces quickly could let a slower, older answer land last and show the
+  // wrong namespace's grants; only the latest request may write.
+  const latest = useRef(0);
   const load = useCallback(async (ns: string) => {
     if (!ns) return;
+    const id = ++latest.current;
     setLoading(true);
     try {
-      setReport(await fetchNamespaceAccess(ns));
+      const next = await fetchNamespaceAccess(ns);
+      if (id === latest.current) setReport(next);
     } finally {
-      setLoading(false);
+      if (id === latest.current) setLoading(false);
     }
   }, []);
 

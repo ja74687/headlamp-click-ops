@@ -1,6 +1,6 @@
-import { request } from '@kinvolk/headlamp-plugin/lib/ApiProxy';
 import { deleteResource } from './apply';
-import { MANAGED_BY_LABEL, MANAGED_BY_VALUE, PURPOSE_LABEL } from './rbac';
+import { AnyObject, listManagedObjects } from './discovery';
+import { PURPOSE_LABEL } from './rbac';
 
 /**
  * Objects this plugin created whose ServiceAccount is gone.
@@ -10,8 +10,6 @@ import { MANAGED_BY_LABEL, MANAGED_BY_VALUE, PURPOSE_LABEL } from './rbac';
  * RoleBinding is not harmless: recreating a ServiceAccount with the same name in the same
  * namespace silently hands the new account every permission the old one had.
  */
-
-const LABEL_SELECTOR = `${MANAGED_BY_LABEL}=${MANAGED_BY_VALUE}`;
 
 export type Orphan = {
   id: string;
@@ -24,17 +22,6 @@ export type Orphan = {
   reason: string;
 };
 
-type AnyObject = { metadata: any; [k: string]: any };
-
-async function listManaged(url: string): Promise<{ items: AnyObject[]; error: string | null }> {
-  try {
-    const res: any = await request(`${url}?labelSelector=${encodeURIComponent(LABEL_SELECTOR)}`);
-    return { items: (res?.items as AnyObject[]) ?? [], error: null };
-  } catch (err) {
-    return { items: [], error: `${url}: ${err instanceof Error ? err.message : String(err)}` };
-  }
-}
-
 function accountOf(obj: AnyObject): string | null {
   const labels = obj.metadata?.labels ?? {};
   return labels['access-builder/account'] ?? labels['access-builder/for-account'] ?? null;
@@ -45,19 +32,55 @@ export type OrphanReport = {
   errors: string[];
 };
 
-export async function findOrphans(): Promise<OrphanReport> {
-  const [sas, secrets, roles, roleBindings, clusterRoles, clusterRoleBindings] = await Promise.all([
-    listManaged('/api/v1/serviceaccounts'),
-    listManaged('/api/v1/secrets'),
-    listManaged('/apis/rbac.authorization.k8s.io/v1/roles'),
-    listManaged('/apis/rbac.authorization.k8s.io/v1/rolebindings'),
-    listManaged('/apis/rbac.authorization.k8s.io/v1/clusterroles'),
-    listManaged('/apis/rbac.authorization.k8s.io/v1/clusterrolebindings'),
-  ]);
+type Listed = { items: AnyObject[]; error: string | null };
 
+export type ManagedLists = {
+  serviceAccounts: Listed;
+  secrets: Listed;
+  roles: Listed;
+  roleBindings: Listed;
+  clusterRoles: Listed;
+  clusterRoleBindings: Listed;
+};
+
+export async function findOrphans(): Promise<OrphanReport> {
+  const [serviceAccounts, secrets, roles, roleBindings, clusterRoles, clusterRoleBindings] =
+    await Promise.all([
+      listManagedObjects('/api/v1/serviceaccounts'),
+      listManagedObjects('/api/v1/secrets'),
+      listManagedObjects('/apis/rbac.authorization.k8s.io/v1/roles'),
+      listManagedObjects('/apis/rbac.authorization.k8s.io/v1/rolebindings'),
+      listManagedObjects('/apis/rbac.authorization.k8s.io/v1/clusterroles'),
+      listManagedObjects('/apis/rbac.authorization.k8s.io/v1/clusterrolebindings'),
+    ]);
+  return classifyOrphans({
+    serviceAccounts,
+    secrets,
+    roles,
+    roleBindings,
+    clusterRoles,
+    clusterRoleBindings,
+  });
+}
+
+export function classifyOrphans(lists: ManagedLists): OrphanReport {
+  const { serviceAccounts: sas, secrets, roles, roleBindings, clusterRoles, clusterRoleBindings } =
+    lists;
   const errors = [sas, secrets, roles, roleBindings, clusterRoles, clusterRoleBindings]
     .map(r => r.error)
     .filter((e): e is string => e !== null);
+
+  // Without the live accounts every managed object looks abandoned, and "Remove all" would
+  // strip every account's access. Report nothing rather than guess.
+  if (sas.error) {
+    return {
+      orphans: [],
+      errors: [
+        'ServiceAccounts could not be listed, so leftovers cannot be told apart from live accounts.',
+        ...errors,
+      ],
+    };
+  }
 
   // An account is identified by name only: that is the same key the naming convention and
   // the labels use, and it is what a recreated ServiceAccount would collide with.

@@ -94,6 +94,31 @@ export const RESOURCE_CATALOG: ApiResource[] = [
     label: 'ClusterRoleBindings',
     scope: 'Cluster',
   },
+  { group: 'traefik.io', resource: 'middlewares', label: 'Traefik Middlewares', scope: 'Namespaced' },
+  {
+    group: 'traefik.io',
+    resource: 'ingressroutes',
+    label: 'Traefik IngressRoutes',
+    scope: 'Namespaced',
+  },
+];
+
+/**
+ * Core resources a read-only viewer gets. Spelled out instead of `*` so that Secrets stay
+ * out, the same line the built-in `view` ClusterRole draws.
+ */
+const CORE_READ_RESOURCES = [
+  'pods',
+  'pods/log',
+  'services',
+  'endpoints',
+  'configmaps',
+  'persistentvolumeclaims',
+  'events',
+  'serviceaccounts',
+  'replicationcontrollers',
+  'limitranges',
+  'resourcequotas',
 ];
 
 export type Preset = {
@@ -108,11 +133,13 @@ export const PRESETS: Preset[] = [
   {
     id: 'ns-viewer',
     label: 'Namespace viewer (read-only)',
-    description: 'get/list/watch on the most common namespaced resources.',
+    description:
+      'get/list/watch on the most common namespaced resources. Secrets are left out, as in the built-in view role.',
     scope: 'Namespaced',
     rules: [
+      { apiGroups: [''], resources: CORE_READ_RESOURCES, verbs: ['get', 'list', 'watch'] },
       {
-        apiGroups: ['', 'apps', 'batch', 'networking.k8s.io', 'autoscaling', 'policy'],
+        apiGroups: ['apps', 'batch', 'networking.k8s.io', 'autoscaling', 'policy'],
         resources: ['*'],
         verbs: ['get', 'list', 'watch'],
       },
@@ -151,8 +178,9 @@ export const PRESETS: Preset[] = [
   },
   {
     id: 'cluster-viewer',
-    label: 'Cluster viewer (read-only, all namespaces)',
-    description: 'Read everything cluster-wide.',
+    label: 'Cluster viewer (read-only, incl. Secrets)',
+    description:
+      'Read everything cluster-wide, Secrets included — unlike the built-in view role. Every token and password in the cluster becomes readable.',
     scope: 'Cluster',
     rules: [
       {
@@ -165,7 +193,8 @@ export const PRESETS: Preset[] = [
   {
     id: 'cluster-admin',
     label: 'Cluster admin (DANGEROUS)',
-    description: 'Full access to everything. Equivalent to the built-in cluster-admin role.',
+    description:
+      'Every listed verb on every resource. Close to the built-in cluster-admin, but without escalate, bind, impersonate and non-resource URLs.',
     scope: 'Cluster',
     rules: [
       {

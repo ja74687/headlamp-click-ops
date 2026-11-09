@@ -30,7 +30,6 @@ export default function OrphansPanel({ refreshKey = 0 }: { refreshKey?: number }
 
   const load = useCallback(async () => {
     setLoading(true);
-    setOutcomes(null);
     try {
       const report = await findOrphans();
       setOrphans(report.orphans);
@@ -45,11 +44,21 @@ export default function OrphansPanel({ refreshKey = 0 }: { refreshKey?: number }
   }, [load, refreshKey]);
 
   async function cleanUp() {
-    if (!orphans) return;
+    if (!orphans || orphans.length === 0) return;
+    const accounts = [...groupByAccount(orphans).keys()].join(', ');
+    if (
+      !window.confirm(
+        `Delete ${orphans.length} object${orphans.length === 1 ? '' : 's'} left over from: ${accounts}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
     setBusy(true);
+    setOutcomes(null);
     try {
       const result = await deleteOrphans(orphans);
       setOutcomes(result);
+      // Reloading must not clear `outcomes`, or the summary vanishes the moment it appears.
       await load();
     } finally {
       setBusy(false);
@@ -83,7 +92,11 @@ export default function OrphansPanel({ refreshKey = 0 }: { refreshKey?: number }
       ))}
 
       {outcomes && (
-        <Alert severity={failed.length === 0 ? 'success' : 'warning'} sx={{ mt: 1 }}>
+        <Alert
+          severity={failed.length === 0 ? 'success' : 'warning'}
+          sx={{ mt: 1 }}
+          onClose={() => setOutcomes(null)}
+        >
           {failed.length === 0
             ? `Removed ${outcomes.length} object${outcomes.length === 1 ? '' : 's'}.`
             : `${failed.length} of ${outcomes.length} could not be removed: ${failed

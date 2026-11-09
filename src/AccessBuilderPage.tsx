@@ -35,19 +35,25 @@ import yaml from 'js-yaml';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ImportOutcome } from './ImportAccountsDialog';
 import {
+  AnyResource,
   applyResources,
+  createResources,
+  deleteIfLabelled,
   deleteResource,
+  describeResource,
   detectApiServerUrl,
   fetchToken,
+  findExisting,
   TokenSecretData,
   waitForToken,
 } from './lib/apply';
 import { PRESETS, RESOURCE_CATALOG, Verb, VERBS } from './lib/catalog';
-import { ManagedAccount } from './lib/discovery';
+import { listManagedAccounts, ManagedAccount } from './lib/discovery';
 import { buildKubeconfig, downloadText } from './lib/kubeconfig';
-import { planChanges, PlannedChange } from './lib/plan';
+import { planChanges, PlannedChange, staleRoleNamespaces } from './lib/plan';
 import { PortableAccount } from './lib/portable';
 import {
+  accountLabels,
   buildAll,
   buildBindings,
   BuildInput,
@@ -71,6 +77,7 @@ import {
 import ManagedAccountsList from './ManagedAccountsList';
 import OrphansPanel from './OrphansPanel';
 import PlanDialog from './PlanDialog';
+import YamlPreview from './YamlPreview';
 
 const ALL_API_GROUPS = Array.from(new Set(RESOURCE_CATALOG.map(r => r.group))).sort();
 
@@ -220,7 +227,8 @@ export default function AccessBuilderPage() {
     setToken(null);
     try {
       if (mode.kind === 'create') {
-        await applyResources(resources);
+        await refuseToOverwrite(resources);
+        await createResources(resources);
         const tok = await waitForToken(tokenNamespace, derived.tokenSecretName);
         setToken(tok);
         setSuccessMessage('Account created. Token ready — download the kubeconfig below.');
@@ -229,10 +237,12 @@ export default function AccessBuilderPage() {
         resetForm();
         setSuccessMessage('Account updated. Download the refreshed kubeconfig from the list above.');
       }
-      setRefreshKey(k => k + 1);
     } catch (err: unknown) {
       setApplyError(err instanceof Error ? err.message : String(err));
     } finally {
+      // Also after a failure: the objects may have been written before the token wait timed
+      // out, and a list that does not show them invites a retry that cannot succeed.
+      setRefreshKey(k => k + 1);
       setApplying(false);
     }
   }
@@ -276,19 +286,35 @@ export default function AccessBuilderPage() {
    */
   async function handleImport(imported: PortableAccount[]): Promise<ImportOutcome[]> {
     const outcomes: ImportOutcome[] = [];
+    let live: ManagedAccount[];
+    try {
+      live = await listManagedAccounts();
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return imported.map(acc => ({ name: acc.name, ok: false, error }));
+    }
     for (const acc of imported) {
       try {
         const names = deriveNames(acc.name);
-        await applyResources(
-          buildAll({
-            scope: acc.scope,
-            namespaces: acc.scope === 'Namespaced' ? acc.namespaces : [],
-            tokenNamespace: acc.namespace,
-            ...names,
-            uiAccess: acc.uiAccess,
-            rules: acc.rules,
-          }),
+        const manifests = buildAll({
+          scope: acc.scope,
+          namespaces: acc.scope === 'Namespaced' ? acc.namespaces : [],
+          tokenNamespace: acc.namespace,
+          ...names,
+          uiAccess: acc.uiAccess,
+          rules: acc.rules,
+        });
+        // Overwriting is the point of an import, but only of the same account. Anything else
+        // under these names is another account's cluster-scoped role or a foreign object.
+        const sameAccount = live.some(
+          a => a.name === names.serviceAccountName && a.namespace === acc.namespace,
         );
+        if (sameAccount) {
+          await applyResources(manifests);
+        } else {
+          await refuseToOverwrite(manifests);
+          await createResources(manifests);
+        }
         outcomes.push({ name: acc.name, ok: true });
       } catch (err) {
         outcomes.push({
@@ -300,10 +326,6 @@ export default function AccessBuilderPage() {
     }
     setRefreshKey(k => k + 1);
     return outcomes;
-  }
-
-  function handleCopyYaml() {
-    navigator.clipboard.writeText(previewYaml).catch(() => {});
   }
 
   async function handleDownloadForExisting(account: ManagedAccount) {
@@ -343,23 +365,22 @@ export default function AccessBuilderPage() {
       return { token: issued.token, caCrtBase64: ca ?? '', namespace: accountNamespace };
     }
     const tok = await fetchToken(accountNamespace, tokenSecretName);
-    if (!tok) return null;
+    if (!tok) {
+      setApplyError(`Token secret ${accountNamespace}/${tokenSecretName} has no token yet.`);
+      return null;
+    }
     setTokenNotice(null);
     return { token: tok.token, caCrtBase64: tok.caCrtBase64, namespace: tok.namespace };
   }
 
   async function downloadForAccount(account: ManagedAccount, url: string) {
+    // resolveCredentials has already said why when it returns null.
     const tok = await resolveCredentials(
       account.namespace,
       account.name,
       account.tokenSecretName,
     );
-    if (!tok) {
-      setApplyError(
-        `Token secret ${account.namespace}/${account.tokenSecretName} has no token yet.`,
-      );
-      return;
-    }
+    if (!tok) return;
     const cfg = buildKubeconfig({
       clusterName,
       serverUrl: url || 'https://kubernetes.default.svc',
@@ -718,43 +739,19 @@ export default function AccessBuilderPage() {
           </Alert>
         </Paper>
 
-        <Paper variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Typography variant="h6">YAML preview</Typography>
-            <Button
-              size="small"
-              startIcon={<Icon icon="mdi:content-copy" />}
-              onClick={handleCopyYaml}
-              disabled={!previewYaml}
-            >
-              Copy
-            </Button>
-          </Stack>
-          {errors.length > 0 ? (
-            <Alert severity="info" sx={{ mt: 1 }}>
-              {errors.map(e => (
-                <div key={e}>{e}</div>
-              ))}
-            </Alert>
-          ) : (
-            <Box
-              component="pre"
-              sx={{
-                m: 0,
-                mt: 1,
-                p: 2,
-                backgroundColor: 'action.hover',
-                fontFamily: 'monospace',
-                fontSize: 13,
-                overflow: 'auto',
-                maxHeight: 360,
-                borderRadius: 1,
-              }}
-            >
-              {previewYaml}
-            </Box>
-          )}
-        </Paper>
+        <YamlPreview
+          yaml={previewYaml}
+          maxHeight={360}
+          placeholder={
+            errors.length > 0 ? (
+              <Alert severity="info" sx={{ mt: 1 }}>
+                {errors.map(e => (
+                  <div key={e}>{e}</div>
+                ))}
+              </Alert>
+            ) : undefined
+          }
+        />
 
         {applyError && (
           <Alert severity="error" onClose={() => setApplyError(null)}>
@@ -877,6 +874,22 @@ export default function AccessBuilderPage() {
   );
 }
 
+/**
+ * Creating must never update. The role, cluster-read and cluster binding names are
+ * cluster-scoped, so an account name reused in a second namespace used to overwrite the
+ * first account's roles, and a name that matched an existing ServiceAccount took it over.
+ */
+async function refuseToOverwrite(resources: AnyResource[]): Promise<void> {
+  const existing = await findExisting(resources);
+  if (existing.length === 0) return;
+  throw new Error(
+    `Nothing was created: ${existing.map(describeResource).join(', ')} already exist. ` +
+      'Role and binding names are shared across the whole cluster, so an account name can be ' +
+      'used only once. Edit the existing account or pick another name — and if no account of ' +
+      'this name is listed, these are leftovers of a deleted one: remove them under Leftovers.',
+  );
+}
+
 async function reconcileEdit(current: ManagedAccount, desired: BuildInput): Promise<void> {
   const desiredBindings = buildBindings(desired);
   const desiredKeys = new Set(
@@ -934,6 +947,18 @@ async function reconcileEdit(current: ManagedAccount, desired: BuildInput): Prom
 
   if (roleKindChanged) {
     await deleteRole(current);
+  } else {
+    // A namespaced Role lives next to its single binding. Moving the account to another
+    // namespace creates the Role there, so the old one would otherwise stay behind.
+    for (const ns of staleRoleNamespaces(current, desired)) {
+      await deleteIfLabelled(
+        'rbac.authorization.k8s.io/v1',
+        'Role',
+        current.roleName,
+        accountLabels(current.name),
+        ns,
+      );
+    }
   }
 }
 
@@ -957,12 +982,18 @@ async function cascadeDelete(account: ManagedAccount): Promise<void> {
   await deleteResource('v1', 'ServiceAccount', account.name, account.namespace);
 }
 
+/**
+ * Only the role this plugin made for the account. `roleName` comes from whichever binding
+ * discovery matched first, and a hand-made one may point at a shared role or at `cluster-admin`.
+ */
 async function deleteRole(account: ManagedAccount): Promise<void> {
+  const labels = accountLabels(account.name);
+  const rbac = 'rbac.authorization.k8s.io/v1';
   if (account.roleKind === 'ClusterRole') {
-    await deleteResource('rbac.authorization.k8s.io/v1', 'ClusterRole', account.roleName);
+    await deleteIfLabelled(rbac, 'ClusterRole', account.roleName, labels);
   } else {
     for (const b of account.bindings) {
-      await deleteResource('rbac.authorization.k8s.io/v1', 'Role', account.roleName, b.namespace);
+      await deleteIfLabelled(rbac, 'Role', account.roleName, labels, b.namespace);
     }
   }
 }

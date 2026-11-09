@@ -301,9 +301,18 @@ export default function ClusterMonitorPage() {
               {nodes.map(n => (
                 <TableRow key={n.name} hover>
                   <TableCell>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                      {n.name}
-                    </Typography>
+                    <Stack direction="row" spacing={0.5} alignItems="center">
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                        {n.name}
+                      </Typography>
+                      {n.errors.length > 0 && (
+                        <Tooltip title={n.errors.join(' · ')}>
+                          <Box component="span" sx={{ display: 'inline-flex', color: 'warning.main' }}>
+                            <Icon icon="mdi:alert-outline" width={16} />
+                          </Box>
+                        </Tooltip>
+                      )}
+                    </Stack>
                   </TableCell>
                   <TableCell>
                     <Chip
@@ -440,11 +449,13 @@ export default function ClusterMonitorPage() {
             )}
           </Typography>
         </Stack>
-        {pvcs.length > 0 && pvcsWithUsage === 0 && (
+        {/* With no kubelet stats at all the cause is access, already reported above — not
+            the storage driver. */}
+        {pvcs.length > 0 && pvcsWithUsage === 0 && !diskUnavailable && (
           <Alert severity="info" sx={{ mb: 1 }}>
-            Per-PVC usage is not reported by your cluster's storage driver. The microk8s in-tree
-            hostpath provisioner doesn't expose volume stats — only capacity is shown. To get
-            real usage, install a CSI driver (e.g. OpenEBS, Longhorn, csi-driver-host-path).
+            Per-PVC usage is not reported by your cluster's storage driver — only capacity is
+            shown. Some in-tree provisioners (e.g. microk8s hostpath) expose no volume stats; a
+            CSI driver such as OpenEBS, Longhorn or csi-driver-host-path does.
           </Alert>
         )}
         {pvcError ? (

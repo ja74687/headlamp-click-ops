@@ -117,6 +117,24 @@ function Row({
   }
 
   const isSecretMasked = hideValues && !reveal;
+  // A textarea has no password mode — MUI drops `type` for a multiline field — so a masked
+  // value is rendered as a single-line password input. Browsers strip line breaks from those,
+  // which would corrupt a PEM key on the first keystroke, so a multi-line value stays
+  // read-only until it is revealed.
+  const lockedWhileMasked = isSecretMasked && entry.value.includes('\n');
+
+  // Pasting a PEM into the masked field would flatten it the same way, so multi-line text is
+  // spliced in by hand — as a textarea would, CRLF becomes LF — and the row then locks.
+  function pasteKeepingLineBreaks(e: React.ClipboardEvent<HTMLInputElement>) {
+    if (!isSecretMasked) return;
+    const text = e.clipboardData.getData('text');
+    if (!/[\r\n]/.test(text)) return;
+    e.preventDefault();
+    const start = e.currentTarget.selectionStart ?? entry.value.length;
+    const end = e.currentTarget.selectionEnd ?? start;
+    const pasted = text.replace(/\r\n?/g, '\n');
+    onChange({ ...entry, value: entry.value.slice(0, start) + pasted + entry.value.slice(end) });
+  }
 
   return (
     <Stack
@@ -140,10 +158,13 @@ function Row({
         value={entry.value}
         onChange={e => onChange({ ...entry, value: e.target.value })}
         placeholder={placeholderValue}
-        multiline
-        minRows={1}
-        maxRows={8}
+        multiline={!isSecretMasked}
+        minRows={isSecretMasked ? undefined : 1}
+        maxRows={isSecretMasked ? undefined : 8}
         type={isSecretMasked ? 'password' : 'text'}
+        InputProps={{ readOnly: lockedWhileMasked }}
+        inputProps={{ onPaste: pasteKeepingLineBreaks }}
+        helperText={lockedWhileMasked ? 'Multi-line value — show it to edit.' : undefined}
         sx={{ flex: 1, width: '100%' }}
       />
       <Stack direction="row" spacing={0.5} alignItems="center" sx={{ pt: 0.5 }}>

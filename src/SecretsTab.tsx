@@ -3,42 +3,38 @@ import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import {
   Alert,
   Autocomplete,
-  Box,
   Button,
-  Chip,
-  CircularProgress,
   Divider,
-  FormControlLabel,
-  IconButton,
   LinearProgress,
   MenuItem,
   Paper,
   Stack,
-  Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField,
-  Tooltip,
   Typography,
 } from '@mui/material';
 import yaml from 'js-yaml';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import KeyValueEditor, { KVEntry } from './KeyValueEditor';
+import KvResourceTable from './KvResourceTable';
 import {
-  applySecret,
   deleteSecret,
   encodeUtf8ToBase64,
+  filterKvItems,
   getSecret,
+  isDnsSubdomain,
   isSystemSecret,
   listSecrets,
+  saveSecret,
   SecretResource,
   tryDecodeBase64ToUtf8,
+  withRequiredKeys,
 } from './lib/kvResources';
+import YamlPreview from './YamlPreview';
 
-type Mode = { kind: 'create' } | { kind: 'edit'; namespace: string; name: string };
+type Mode =
+  | { kind: 'create' }
+  // `live` is the object as it was when editing started; saving checks nobody changed it since.
+  | { kind: 'edit'; namespace: string; name: string; live: SecretResource };
 
 type SecretTypeDef = {
   type: string;
@@ -133,35 +129,31 @@ export default function SecretsTab({ activeNamespaces = [] }: Props) {
     load();
   }, [load]);
 
-  useEffect(() => {
-    const def = typeDef(secretType);
-    if (!def.requiredKeys) return;
-    setEntries(prev => {
-      const existing = new Map(prev.map(e => [e.key, e]));
-      return def.requiredKeys!.map(k =>
-        existing.get(k) ?? { key: k, value: '', alreadyEncoded: false },
-      );
-    });
-  }, [secretType]);
+  /**
+   * Only a type picked by hand reshapes the rows. Doing this in an effect on `secretType`
+   * also fired when an existing Secret was loaded for editing, and cut every key outside
+   * the required set — a cert-manager TLS Secret lost its `ca.crt` on the next save.
+   */
+  function changeType(next: string) {
+    setSecretType(next);
+    const required = typeDef(next).requiredKeys;
+    if (!required) return;
+    setEntries(prev =>
+      withRequiredKeys(prev, required, k => ({ key: k, value: '', alreadyEncoded: false })),
+    );
+  }
 
-  const filtered = useMemo(() => {
-    if (!items) return null;
-    const nsSet = new Set(activeNamespaces);
-    return items
-      .filter(s => (hideSystem ? !isSystemSecret(s) : true))
-      .filter(s => (nsSet.size > 0 ? nsSet.has(s.metadata.namespace) : true))
-      .filter(s =>
-        filter
-          ? s.metadata.name.toLowerCase().includes(filter.toLowerCase()) ||
-            s.metadata.namespace.toLowerCase().includes(filter.toLowerCase())
-          : true,
-      )
-      .sort((a, b) =>
-        `${a.metadata.namespace}/${a.metadata.name}`.localeCompare(
-          `${b.metadata.namespace}/${b.metadata.name}`,
-        ),
-      );
-  }, [items, hideSystem, filter, activeNamespaces]);
+  const filtered = useMemo(
+    () =>
+      items &&
+      filterKvItems(items, {
+        hideSystem,
+        isSystem: isSystemSecret,
+        namespaces: activeNamespaces,
+        text: filter,
+      }),
+    [items, hideSystem, filter, activeNamespaces],
+  );
 
   function resetForm() {
     setMode({ kind: 'create' });
@@ -175,7 +167,12 @@ export default function SecretsTab({ activeNamespaces = [] }: Props) {
 
   async function startEdit(sec: SecretResource) {
     const fresh = (await getSecret(sec.metadata.namespace, sec.metadata.name)) ?? sec;
-    setMode({ kind: 'edit', namespace: fresh.metadata.namespace, name: fresh.metadata.name });
+    setMode({
+      kind: 'edit',
+      namespace: fresh.metadata.namespace,
+      name: fresh.metadata.name,
+      live: fresh,
+    });
     setNamespace(fresh.metadata.namespace);
     setName(fresh.metadata.name);
     setSecretType(fresh.type ?? 'Opaque');
@@ -221,13 +218,13 @@ export default function SecretsTab({ activeNamespaces = [] }: Props) {
     setError(null);
     setSuccess(null);
     try {
-      await applySecret({
-        metadata: { name, namespace },
-        type: secretType,
-        data: desiredData,
-      });
-      setSuccess(`Secret ${namespace}/${name} saved.`);
+      await saveSecret(
+        { metadata: { name, namespace }, type: secretType, data: desiredData },
+        mode.kind === 'edit' ? mode.live : null,
+      );
+      // resetForm clears `success`, so the message has to come after it.
       resetForm();
+      setSuccess(`Secret ${namespace}/${name} saved.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -259,95 +256,20 @@ export default function SecretsTab({ activeNamespaces = [] }: Props) {
 
   return (
     <Stack spacing={3}>
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-          <Typography variant="h6">Secrets</Typography>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <FormControlLabel
-              control={<Switch checked={hideSystem} onChange={e => setHideSystem(e.target.checked)} />}
-              label={<Typography variant="body2">Hide system</Typography>}
-            />
-            <Tooltip title="Refresh">
-              <IconButton onClick={load} size="small" aria-label="Refresh">
-                <Icon icon="mdi:refresh" />
-              </IconButton>
-            </Tooltip>
-          </Stack>
-        </Stack>
-
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ mb: 1 }}>
-          <TextField
-            size="small"
-            label="Filter name"
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
-            sx={{ flex: 1 }}
-          />
-        </Stack>
-
-        {listError && (
-          <Alert severity="error" sx={{ mb: 1 }} onClose={() => setListError(null)}>
-            {listError}
-          </Alert>
-        )}
-        {filtered === null ? (
-          <Stack alignItems="center" sx={{ py: 3 }}>
-            <CircularProgress size={24} />
-          </Stack>
-        ) : filtered.length === 0 ? (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-            No Secrets match the filters.
-          </Typography>
-        ) : (
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Namespace</TableCell>
-                <TableCell>Type</TableCell>
-                <TableCell>Keys</TableCell>
-                <TableCell align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filtered.map(s => (
-                <TableRow hover key={`${s.metadata.namespace}/${s.metadata.name}`}>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                      {s.metadata.name}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip size="small" label={s.metadata.namespace} />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
-                      {s.type ?? 'Opaque'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="caption" color="text.secondary">
-                      {Object.keys(s.data ?? {}).length} keys
-                    </Typography>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Tooltip title="Edit">
-                      <IconButton size="small" onClick={() => startEdit(s)}>
-                        <Icon icon="mdi:pencil-outline" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton size="small" onClick={() => remove(s)} color="error">
-                        <Icon icon="mdi:delete-outline" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Paper>
+      <KvResourceTable
+        title="Secrets"
+        items={filtered}
+        listError={listError}
+        onClearError={() => setListError(null)}
+        hideSystem={hideSystem}
+        onHideSystemChange={setHideSystem}
+        filter={filter}
+        onFilterChange={setFilter}
+        onRefresh={load}
+        onEdit={startEdit}
+        onDelete={remove}
+        typeOf={s => s.type ?? 'Opaque'}
+      />
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
@@ -380,7 +302,7 @@ export default function SecretsTab({ activeNamespaces = [] }: Props) {
             select
             label="Type"
             value={secretType}
-            onChange={e => setSecretType(e.target.value)}
+            onChange={e => changeType(e.target.value)}
             disabled={mode.kind === 'edit'}
             sx={{ minWidth: 240 }}
             helperText={currentType.description}
@@ -411,38 +333,15 @@ export default function SecretsTab({ activeNamespaces = [] }: Props) {
         />
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between">
-          <Typography variant="h6">YAML preview</Typography>
-          <Button
-            size="small"
-            startIcon={<Icon icon="mdi:content-copy" />}
-            onClick={() => navigator.clipboard.writeText(previewYaml).catch(() => {})}
-          >
-            Copy
-          </Button>
-        </Stack>
-        <Typography variant="caption" color="text.secondary">
-          Secret values are shown as <code>***</code> in the preview. The real base64 values are
-          sent to the cluster on Save.
-        </Typography>
-        <Box
-          component="pre"
-          sx={{
-            m: 0,
-            mt: 1,
-            p: 2,
-            backgroundColor: 'action.hover',
-            fontFamily: 'monospace',
-            fontSize: 13,
-            overflow: 'auto',
-            maxHeight: 320,
-            borderRadius: 1,
-          }}
-        >
-          {previewYaml}
-        </Box>
-      </Paper>
+      <YamlPreview
+        yaml={previewYaml}
+        caption={
+          <>
+            Secret values are shown as <code>***</code> in the preview. The real base64 values
+            are sent to the cluster on Save.
+          </>
+        }
+      />
 
       {errors.length > 0 && (
         <Alert severity="info">
@@ -500,8 +399,10 @@ function validate(
   const errs: string[] = [];
   if (!namespace) errs.push('Namespace is required.');
   if (!name) errs.push('Name is required.');
-  if (name && !/^[a-z0-9][-a-z0-9.]*$/.test(name)) {
-    errs.push('Name must be a valid DNS subdomain (lowercase letters, digits, ".", "-").');
+  if (name && !isDnsSubdomain(name)) {
+    errs.push(
+      'Name must be a valid DNS subdomain (lowercase letters, digits, "." and "-", starting and ending with a letter or digit).',
+    );
   }
   const nonEmpty = entries.filter(e => e.key);
   if (nonEmpty.length === 0) errs.push('At least one data entry is required.');

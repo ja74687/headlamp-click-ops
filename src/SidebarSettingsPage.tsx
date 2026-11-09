@@ -36,6 +36,7 @@ const OWN_ENTRIES = new Set([
   'access-builder',
   'namespace-access',
   'resource-builder',
+  'traefik',
   'cluster-monitor',
 ]);
 

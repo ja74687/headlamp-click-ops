@@ -6,6 +6,7 @@ import {
   buildServiceAccount,
   buildTokenSecret,
   buildUiClusterRead,
+  deriveNames,
   roleKind,
 } from './rbac';
 
@@ -144,7 +145,7 @@ export function planChanges(current: ManagedAccount, desired: BuildInput): Plann
     });
   }
 
-  if (roleKindChanged) {
+  if (roleKindChanged && ownsRoleName(current)) {
     changes.push({
       action: 'delete',
       kind: current.roleKind,
@@ -154,14 +155,43 @@ export function planChanges(current: ManagedAccount, desired: BuildInput): Plann
     });
   }
 
+  for (const ns of staleRoleNamespaces(current, desired)) {
+    changes.push({
+      action: 'delete',
+      kind: 'Role',
+      name: current.roleName,
+      namespace: ns,
+      reason: `the account moved out of ${ns}, so its Role there goes too`,
+    });
+  }
+
   return changes;
+}
+
+/**
+ * Namespaces still holding the account's Role after an edit that keeps it a Role.
+ *
+ * A Role sits next to the account's single binding; moving the account to another namespace
+ * creates the Role there, and without this the old one stays behind.
+ */
+export function staleRoleNamespaces(current: ManagedAccount, desired: BuildInput): string[] {
+  if (current.roleKind !== 'Role' || roleKind(desired) !== 'Role') return [];
+  if (!ownsRoleName(current)) return [];
+  const kept = desired.namespaces[0];
+  return [...new Set(current.bindings.map(b => b.namespace))].filter(ns => ns !== kept);
+}
+
+/**
+ * Whether the account's role is the one this plugin made for it. Discovery takes the role
+ * name from the first binding that matches, and a binding someone made by hand can point at
+ * a shared role or a built-in like `cluster-admin` — deleting that would hit every other
+ * subject bound to it. The delete itself also checks the labels (`deleteIfLabelled`).
+ */
+export function ownsRoleName(current: ManagedAccount): boolean {
+  return current.roleName === deriveNames(current.name).roleName;
 }
 
 /** Changes that take access away, which is what deserves a second look before applying. */
 export function destructiveChanges(changes: PlannedChange[]): PlannedChange[] {
   return changes.filter(c => c.action === 'delete' || c.action === 'recreate');
-}
-
-export function hasRealChanges(changes: PlannedChange[]): boolean {
-  return changes.some(c => c.action !== 'update');
 }

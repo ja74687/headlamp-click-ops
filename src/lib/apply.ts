@@ -1,7 +1,7 @@
 import { patch, post, request } from '@kinvolk/headlamp-plugin/lib/ApiProxy';
 import yaml from 'js-yaml';
 
-type AnyResource = {
+export type AnyResource = {
   apiVersion: string;
   kind: string;
   metadata: { name: string; namespace?: string };
@@ -43,6 +43,8 @@ function kindToPlural(kind: string): string {
     PersistentVolume: 'persistentvolumes',
     PersistentVolumeClaim: 'persistentvolumeclaims',
     PriorityClass: 'priorityclasses',
+    Middleware: 'middlewares',
+    IngressRoute: 'ingressroutes',
   };
   const mapped = map[kind];
   if (mapped) return mapped;
@@ -67,10 +69,14 @@ function statusOf(err: unknown): number | null {
   return m ? Number(m[1]) : null;
 }
 
-function isConflict(err: unknown): boolean {
+/**
+ * 409: a create that found the name taken, or a write whose resourceVersion is stale ("the
+ * object has been modified").
+ */
+export function isConflict(err: unknown): boolean {
   if (statusOf(err) === 409) return true;
   const msg = err instanceof Error ? err.message : String(err);
-  return /already\s*exists|\bconflict\b/i.test(msg);
+  return /already\s*exists|\bconflict\b|the object has been modified/i.test(msg);
 }
 
 export function isNotFound(err: unknown): boolean {
@@ -111,6 +117,68 @@ export async function applyResources(resources: AnyResource[]): Promise<void> {
   }
 }
 
+/**
+ * The subset of `resources` that already exists. `applyResources` updates whatever it finds,
+ * which is right for an edit and wrong for a create: there it silently takes over someone
+ * else's ServiceAccount or overwrites a cluster-scoped role another account relies on.
+ * Only a 404 counts as absent: an object we could not read might well exist, so any other
+ * failure stops the create instead of letting it overwrite blind.
+ */
+export async function findExisting(resources: AnyResource[]): Promise<AnyResource[]> {
+  const found = await Promise.all(
+    resources.map(async res => {
+      try {
+        await request(getUrlFor(res));
+        return res;
+      } catch (err) {
+        if (isNotFound(err)) return null;
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Could not check whether ${describeResource(res)} exists: ${msg}`);
+      }
+    }),
+  );
+  return found.filter((r): r is AnyResource => r !== null);
+}
+
+/**
+ * Create only. A 409 is an error here, never a cue to update what is there — checking with
+ * `findExisting` first and then calling `applyResources` leaves a window in which someone
+ * else's object would be overwritten. Returns what the API server stored.
+ */
+export async function createResource(res: AnyResource): Promise<any> {
+  try {
+    return await post(urlFor(res), res, false);
+  } catch (err) {
+    if (isConflict(err)) throw new Error(`${describeResource(res)} already exists.`);
+    throw err;
+  }
+}
+
+export async function createResources(resources: AnyResource[]): Promise<void> {
+  for (const res of resources) {
+    await createResource(res);
+  }
+}
+
+/**
+ * Update an object the user has been editing since `live` was read. The PUT carries that
+ * resourceVersion, so a change someone made in the meantime fails with 409 instead of being
+ * silently overwritten — `applyResources` re-reads first and so can never notice one.
+ * Returns what the API server stored.
+ */
+export async function updateResource(live: any, desired: AnyResource): Promise<any> {
+  return request(getUrlFor(desired), {
+    method: 'PUT',
+    body: JSON.stringify(mergeOntoExisting(live, desired)),
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export function describeResource(res: AnyResource): string {
+  const ns = res.metadata.namespace ? ` in ${res.metadata.namespace}` : '';
+  return `${res.kind} ${res.metadata.name}${ns}`;
+}
+
 async function createOrUpdate(res: AnyResource): Promise<void> {
   try {
     await post(urlFor(res), res, false);
@@ -141,6 +209,32 @@ export async function deleteResource(
   } catch (err: any) {
     if (!isNotFound(err)) throw err;
   }
+}
+
+/**
+ * Delete only when the live object carries every one of `labels`. For deletes driven by a
+ * name read back from the cluster, which may belong to someone else — a role name taken from
+ * a hand-made binding can be `cluster-admin`. Returns whether anything was deleted.
+ */
+export async function deleteIfLabelled(
+  apiVersion: string,
+  kind: string,
+  name: string,
+  labels: Record<string, string>,
+  namespace?: string,
+): Promise<boolean> {
+  const res = { apiVersion, kind, metadata: { name, namespace } };
+  let live: any;
+  try {
+    live = await request(getUrlFor(res));
+  } catch (err) {
+    if (isNotFound(err)) return false;
+    throw err;
+  }
+  const actual = live?.metadata?.labels ?? {};
+  if (!Object.entries(labels).every(([k, v]) => actual[k] === v)) return false;
+  await deleteResource(apiVersion, kind, name, namespace);
+  return true;
 }
 
 export async function patchResource(

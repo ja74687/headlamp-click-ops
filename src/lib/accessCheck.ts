@@ -1,4 +1,5 @@
 import { post } from '@kinvolk/headlamp-plugin/lib/ApiProxy';
+import { Rule } from './rbac';
 
 /**
  * Ask the API server what an account is actually allowed to do, instead of reasoning about
@@ -36,15 +37,46 @@ export function serviceAccountUser(namespace: string, name: string): string {
   return `system:serviceaccount:${namespace}:${name}`;
 }
 
+/**
+ * The groups every ServiceAccount token authenticates with. A review that names only the
+ * user ignores grants made to these groups, and reports "denied" for things the account
+ * can in fact do.
+ */
+export function serviceAccountGroups(namespace: string): string[] {
+  return ['system:serviceaccounts', `system:serviceaccounts:${namespace}`, 'system:authenticated'];
+}
+
 export type CheckTarget = {
   namespace: string;
   name: string;
   /** Namespaces the account is bound to; the first few get a per-namespace check. */
   boundNamespaces: string[];
   scope: 'Namespaced' | 'Cluster';
+  /** The account's own rules; the per-namespace check asks for something they grant. */
+  rules?: Rule[];
 };
 
 const MAX_NAMESPACE_CHECKS = 3;
+
+/**
+ * One permission taken straight from the account's first rule. Checking "list pods" for
+ * everyone flagged an account meant only for ConfigMaps as unable to use Headlamp. Wildcards
+ * are passed through as-is: RBAC matches a requested `*` only against a rule's own `*`.
+ */
+export function representativeAttrs(rules: Rule[] | undefined): Omit<ResourceAttributes, 'namespace'> {
+  const rule = (rules ?? []).find(
+    r => r.apiGroups.length > 0 && r.resources.length > 0 && r.verbs.length > 0,
+  );
+  if (!rule) return { verb: 'list', group: '', resource: 'pods' };
+  const verb = rule.verbs.includes('list') ? 'list' : rule.verbs[0];
+  const [resource, subresource] = rule.resources[0].split('/', 2);
+  return {
+    verb,
+    group: rule.apiGroups[0],
+    resource,
+    ...(subresource ? { subresource } : {}),
+  };
+}
 
 export function buildChecks(target: CheckTarget): AccessCheck[] {
   const checks: AccessCheck[] = [
@@ -99,12 +131,14 @@ export function buildChecks(target: CheckTarget): AccessCheck[] {
   ];
 
   if (target.scope === 'Namespaced') {
+    const attrs = representativeAttrs(target.rules);
+    const what = `${attrs.verb} ${attrs.resource}${attrs.subresource ? `/${attrs.subresource}` : ''}`;
     for (const ns of target.boundNamespaces.slice(0, MAX_NAMESPACE_CHECKS)) {
       checks.push({
-        id: `pods-in-${ns}`,
-        label: `list pods in ${ns}`,
+        id: `work-in-${ns}`,
+        label: `${what} in ${ns}`,
         enables: `the account's actual work in ${ns}`,
-        attrs: { verb: 'list', group: '', resource: 'pods', namespace: ns },
+        attrs: { ...attrs, namespace: ns },
       });
     }
   }
@@ -112,13 +146,18 @@ export function buildChecks(target: CheckTarget): AccessCheck[] {
   return checks;
 }
 
-async function runOne(user: string, check: AccessCheck): Promise<AccessCheckResult> {
+async function runOne(
+  user: string,
+  groups: string[],
+  check: AccessCheck,
+): Promise<AccessCheckResult> {
   try {
     const body = {
       apiVersion: 'authorization.k8s.io/v1',
       kind: 'SubjectAccessReview',
       spec: {
         user,
+        groups,
         resourceAttributes: {
           verb: check.attrs.verb,
           group: check.attrs.group,
@@ -152,8 +191,9 @@ export type AccessCheckReport = {
 
 export async function runAccessChecks(target: CheckTarget): Promise<AccessCheckReport> {
   const user = serviceAccountUser(target.namespace, target.name);
+  const groups = serviceAccountGroups(target.namespace);
   const checks = buildChecks(target);
-  const results = await Promise.all(checks.map(c => runOne(user, c)));
+  const results = await Promise.all(checks.map(c => runOne(user, groups, c)));
 
   // Creating a SubjectAccessReview needs permission of its own. If every single check failed
   // to run, it is this account's reviewer access that is missing, not the account's.

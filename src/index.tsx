@@ -9,9 +9,7 @@ import { getCurrentSettings, recordDiscovered } from './lib/sidebarSettings';
 import NamespaceAccessPage from './NamespaceAccessPage';
 import ResourceBuilderPage from './ResourceBuilderPage';
 import SidebarSettingsPage from './SidebarSettingsPage';
-
-// eslint-disable-next-line no-console
-console.log('[access-builder] plugin loaded');
+import TraefikPage from './TraefikPage';
 
 const PROTECTED_ENTRIES = new Set(['sidebar-settings']);
 
@@ -117,6 +115,25 @@ registerRoute({
   exact: true,
   useClusterURL: true,
   component: () => <ResourceBuilderPage />,
+});
+
+registerSidebarEntry({
+  parent: null,
+  sidebar: 'IN-CLUSTER',
+  name: 'traefik',
+  label: 'Traefik',
+  url: '/traefik',
+  icon: 'mdi:router-network',
+  useClusterURL: true,
+});
+
+registerRoute({
+  path: '/traefik',
+  sidebar: 'traefik',
+  name: 'traefik',
+  exact: true,
+  useClusterURL: true,
+  component: () => <TraefikPage />,
 });
 
 registerSidebarEntry({

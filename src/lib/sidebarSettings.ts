@@ -1,6 +1,4 @@
 const STORAGE_KEY = 'click-ops:sidebar-settings';
-export const MORE_PARENT_NAME = 'click-ops-more';
-export const MORE_LABEL = 'More';
 
 export interface SidebarSettings {
   hidden: string[];

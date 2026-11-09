@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildChecks, isBlocking, serviceAccountUser } from './accessCheck';
+import {
+  buildChecks,
+  isBlocking,
+  representativeAttrs,
+  serviceAccountGroups,
+  serviceAccountUser,
+} from './accessCheck';
 
 const target = {
   namespace: 'default',
@@ -22,18 +28,18 @@ describe('buildChecks', () => {
       .filter(c => !c.optional)
       .map(c => c.id);
     expect(required).toContain('namespaces');
-    expect(required).toContain('pods-in-a');
+    expect(required).toContain('work-in-a');
     expect(required).not.toContain('nodeproxy');
   });
 
   it('caps per-namespace checks so a wide account does not fan out', () => {
-    const perNamespace = buildChecks(target).filter(c => c.id.startsWith('pods-in-'));
+    const perNamespace = buildChecks(target).filter(c => c.id.startsWith('work-in-'));
     expect(perNamespace).toHaveLength(3);
   });
 
   it('skips per-namespace checks for a cluster-wide account', () => {
     const checks = buildChecks({ ...target, scope: 'Cluster' });
-    expect(checks.some(c => c.id.startsWith('pods-in-'))).toBe(false);
+    expect(checks.some(c => c.id.startsWith('work-in-'))).toBe(false);
   });
 
   it('asks about nodes/proxy as a subresource rather than a resource name', () => {
@@ -62,5 +68,55 @@ describe('isBlocking', () => {
 
   it('does not flag an undetermined check — unknown is not denied', () => {
     expect(isBlocking({ ...base, allowed: null })).toBe(false);
+  });
+});
+
+describe('serviceAccountGroups', () => {
+  it('lists the groups a ServiceAccount token authenticates with', () => {
+    expect(serviceAccountGroups('team-a')).toEqual([
+      'system:serviceaccounts',
+      'system:serviceaccounts:team-a',
+      'system:authenticated',
+    ]);
+  });
+});
+
+describe('representativeAttrs', () => {
+  it('checks something the account was actually given, not pods for everyone', () => {
+    const attrs = representativeAttrs([
+      { apiGroups: [''], resources: ['configmaps'], verbs: ['get', 'list'] },
+    ]);
+    expect(attrs).toEqual({ verb: 'list', group: '', resource: 'configmaps' });
+  });
+
+  it('splits a subresource the way SubjectAccessReview expects it', () => {
+    const attrs = representativeAttrs([
+      { apiGroups: [''], resources: ['pods/exec'], verbs: ['create'] },
+    ]);
+    expect(attrs).toEqual({ verb: 'create', group: '', resource: 'pods', subresource: 'exec' });
+  });
+
+  it('passes wildcards through, since RBAC matches a requested * only against its own *', () => {
+    const attrs = representativeAttrs([{ apiGroups: ['*'], resources: ['*'], verbs: ['*'] }]);
+    expect(attrs).toEqual({ verb: '*', group: '*', resource: '*' });
+  });
+
+  it('falls back to listing pods when there are no usable rules', () => {
+    expect(representativeAttrs([])).toEqual({ verb: 'list', group: '', resource: 'pods' });
+    expect(representativeAttrs([{ apiGroups: [''], resources: [], verbs: ['get'] }])).toEqual({
+      verb: 'list',
+      group: '',
+      resource: 'pods',
+    });
+  });
+
+  it('feeds the per-namespace checks', () => {
+    const checks = buildChecks({
+      ...target,
+      rules: [{ apiGroups: ['apps'], resources: ['deployments'], verbs: ['get'] }],
+    });
+    const inA = checks.find(c => c.id === 'work-in-a');
+    expect(inA?.attrs).toEqual({ verb: 'get', group: 'apps', resource: 'deployments', namespace: 'a' });
+    expect(inA?.label).toBe('get deployments in a');
   });
 });

@@ -1,35 +1,18 @@
 import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { Autocomplete, Box, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
-import React, { useMemo, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import React, { useState } from 'react';
 import ConfigMapsTab from './ConfigMapsTab';
 import SecretsTab from './SecretsTab';
-
-const SET_NAMESPACE_FILTER = 'filter/setNamespaceFilter';
-
-function useGlobalNamespaces(): string[] {
-  const namespacesSet = useSelector(
-    (state: { filter?: { namespaces?: Set<string> | string[] } }) => state?.filter?.namespaces,
-  );
-  return useMemo(() => {
-    if (!namespacesSet) return [];
-    if (namespacesSet instanceof Set) return [...namespacesSet];
-    if (Array.isArray(namespacesSet)) return [...namespacesSet];
-    return [];
-  }, [namespacesSet]);
-}
+import { useGlobalNamespaces, useSetGlobalNamespaces } from './useNamespaceFilter';
 
 export default function ResourceBuilderPage() {
   const [tab, setTab] = useState<'configmaps' | 'secrets'>('configmaps');
   const activeNamespaces = useGlobalNamespaces();
+  const setGlobalNamespaces = useSetGlobalNamespaces();
 
-  const dispatch = useDispatch();
   const [namespaces] = K8s.ResourceClasses.Namespace.useList();
   const namespaceOptions = (namespaces ?? []).map(n => n.metadata.name).sort();
-
-  const setGlobalNamespaces = (next: string[]) =>
-    dispatch({ type: SET_NAMESPACE_FILTER, payload: next });
 
   return (
     <SectionBox textAlign="left">

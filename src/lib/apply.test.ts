@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNotFound, mergeOntoExisting } from './apply';
+import { isConflict, isNotFound, mergeOntoExisting } from './apply';
 
 describe('mergeOntoExisting', () => {
   const live = {
@@ -105,5 +105,26 @@ describe('isNotFound', () => {
 
   it('does not mistake an unrelated 403 for a 404', () => {
     expect(isNotFound(new Error('pods is forbidden: 403'))).toBe(false);
+  });
+});
+
+describe('isConflict', () => {
+  it('reads the status Headlamp puts on its errors', () => {
+    expect(isConflict(Object.assign(new Error('x'), { status: 409 }))).toBe(true);
+    expect(isConflict(Object.assign(new Error('x'), { status: 404 }))).toBe(false);
+  });
+
+  it('recognises a create that found the name taken', () => {
+    expect(isConflict(new Error('configmaps "app" already exists'))).toBe(true);
+  });
+
+  it('recognises a stale resourceVersion on a patch', () => {
+    expect(
+      isConflict(
+        new Error(
+          'Operation cannot be fulfilled on ingresses.networking.k8s.io "web": the object has been modified; please apply your changes to the latest version and try again',
+        ),
+      ),
+    ).toBe(true);
   });
 });
