@@ -33,7 +33,7 @@ keywords:
   - basic-auth
   - ip-allowlist
 annotations:
-  headlamp/plugin/archive-url: "https://github.com/ja74687/headlamp-click-ops/releases/download/v0.4.0/headlamp-click-ops-0.4.0.tar.gz"
-  headlamp/plugin/archive-checksum: "sha256:cd6dc2732ddf44cc1302477a3210c425dd345c8ee29c8215e31491320d8e3c7f"
+  headlamp/plugin/archive-url: "https://github.com/ja74687/headlamp-click-ops/releases/download/v0.5.0/headlamp-click-ops-0.5.0.tar.gz"
+  headlamp/plugin/archive-checksum: "sha256:a321563f818820f14b49f5c1e9ada8a6b59719efc4d6984f46b070e8dd7e2f4d"
   headlamp/plugin/version-compat: ">=0.25.0"
   headlamp/plugin/distro-compat: "in-cluster,web,docker-desktop,linux,windows,mac"
